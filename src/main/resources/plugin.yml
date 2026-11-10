@@ -3,8 +3,9 @@ version: '${version}'
 main: dev.catmaid.CatMaidPlugin
 api-version: '26.2'
 author: Hayuuka
-depend: [Citizens, BetterModel]
-softdepend: [CraftEngine]
+# 用 softdepend 而非 depend：depend 缺失时 Paper 会以英文报错拒绝加载，
+# 就无法满足"缺依赖时自禁用并打印中文原因"的验收项。softdepend 同样保证加载顺序。
+softdepend: [Citizens, BetterModel, CraftEngine]
 commands:
   catmaid:
     description: 猫娘女仆主命令
