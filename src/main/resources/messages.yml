@@ -1,0 +1,19 @@
+# 玩家可见文案统一在此维护（agent.md 5.5）。MiniMessage 格式。
+prefix: "<light_purple>[CatMaid]</light_purple> "
+
+no-permission: "<red>你没有权限这样做。"
+player-only: "<red>该命令只能由玩家执行。"
+player-not-found: "<red>找不到玩家：{player}"
+
+depend-missing: "<red>缺少必需依赖 {name}，猫娘女仆已停止工作。"
+
+summon-success: "<green>已召唤女仆 {name}（模型 {model}）。"
+summon-max: "<red>你最多只能拥有 {max} 只女仆。"
+summon-no-model: "<red>配置里没有任何可用模型，请检查 config.yml 的 models。"
+remove-success: "<yellow>已送走女仆 {name}。"
+maid-not-found: "<red>找不到这个女仆。"
+
+list-header: "<light_purple>女仆列表（共 {count} 只）："
+list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
+state-alive: "<green>存活"
+state-bell: "<gray>铃铛"

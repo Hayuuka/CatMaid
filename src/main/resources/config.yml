@@ -1,0 +1,18 @@
+# CatMaid 配置（Phase 1）
+# 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致
+general:
+  max-per-player: 2
+  initial-affection: 10
+
+models:
+  - reimu
+  - marisa
+  - youmu
+  - remilia
+
+# 随机名字池，召唤时从中取一个
+names:
+  - 小铃
+  - 汐音
+  - 千夜
+  - 缀理
