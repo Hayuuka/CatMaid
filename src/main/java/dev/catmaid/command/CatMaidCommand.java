@@ -149,14 +149,17 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
     }
 
-    /** 只认 usercache/在线玩家，避免管理员手抖拼错名字造出幽灵 UUID。 */
+    /** 在线 → usercache → （仅离线模式）按名称建档；在线模式没有权威 UUID 时直接拒绝，避免造幽灵档案。 */
     private OfflinePlayer resolvePlayer(String name) {
         Player online = Bukkit.getPlayerExact(name);
         if (online != null) {
             return online;
         }
         OfflinePlayer cached = Bukkit.getOfflinePlayerIfCached(name);
-        return cached;
+        if (cached != null) {
+            return cached;
+        }
+        return Bukkit.getServer().getOnlineMode() ? null : Bukkit.getOfflinePlayer(name);
     }
 
     private String displayName(OfflinePlayer player) {

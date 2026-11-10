@@ -63,7 +63,7 @@ public final class MaidRepository {
                 del3.setString(1, maidId.toString());
                 del3.executeUpdate();
             } catch (SQLException e) {
-                logger.log(Level.SEVERE, "[CatMaid] 删除女仆 " + maidId + " 失败", e);
+                logger.log(Level.SEVERE, "删除女仆 " + maidId + " 失败", e);
             }
         });
     }
@@ -77,7 +77,7 @@ public final class MaidRepository {
                 maids.add(readMaid(rs));
             }
         } catch (SQLException e) {
-            logger.log(Level.SEVERE, "[CatMaid] 读取女仆数据失败", e);
+            logger.log(Level.SEVERE, "读取女仆数据失败", e);
         }
         for (Maid maid : maids) {
             loadItems(maid);
@@ -92,7 +92,7 @@ public final class MaidRepository {
             executor.submit(() -> {
             }).get(10, TimeUnit.SECONDS);
         } catch (Exception e) {
-            logger.log(Level.WARNING, "[CatMaid] 等待数据库写入超时，可能有未保存的改动", e);
+            logger.log(Level.WARNING, "等待数据库写入超时，可能有未保存的改动", e);
         }
     }
 
@@ -137,7 +137,7 @@ public final class MaidRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.log(Level.WARNING, "[CatMaid] 读取女仆 " + maid.getName() + " 的物品失败", e);
+            logger.log(Level.WARNING, "读取女仆 " + maid.getName() + " 的物品失败", e);
         }
     }
 
@@ -152,7 +152,7 @@ public final class MaidRepository {
                 }
             }
         } catch (SQLException e) {
-            logger.log(Level.WARNING, "[CatMaid] 读取女仆统计失败", e);
+            logger.log(Level.WARNING, "读取女仆统计失败", e);
         }
     }
 
@@ -191,7 +191,7 @@ public final class MaidRepository {
             } catch (SQLException ignored) {
                 // 回滚失败已无从补救，保留原始异常更有价值
             }
-            logger.log(Level.SEVERE, "[CatMaid] 保存女仆 " + s.name() + " 失败", e);
+            logger.log(Level.SEVERE, "保存女仆 " + s.name() + " 失败", e);
         } finally {
             try {
                 connection.setAutoCommit(true);
