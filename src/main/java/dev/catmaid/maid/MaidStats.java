@@ -59,4 +59,13 @@ public final class MaidStats {
     public void addMilk() {
         milks++;
     }
+
+    /** 仅供 MaidRepository 从数据库回填，运行期请用五个 addXxx 方法累加。 */
+    public void restore(int kills, int harvests, int breeds, int shears, int milks) {
+        this.kills = kills;
+        this.harvests = harvests;
+        this.breeds = breeds;
+        this.shears = shears;
+        this.milks = milks;
+    }
 }
