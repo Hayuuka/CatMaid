@@ -2,9 +2,10 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-10
+> 最后更新：2026-11-11（Phase 1 收口）
 
-**Phase 0 状态：已完成**（客户端实机验收通过）。**Phase 1 状态：已完成**（服务端 5 项验收通过，模型外观待客户端实测，详见第 11 节）。
+**Phase 0 状态：已完成**（客户端实机验收通过）。
+**Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节；**接手请直接读第 15 节**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -683,3 +684,125 @@ bbmodel 里的动画名是 `idle / walk / run / sit / jump / attacked / death`�
 动画数据本身是 geckolib 的旋转/位移关键帧，坐标与角度未做轴向翻转（BetterModel 不解析 model_format，
 按 bbmodel 原生空间处理），**首次在客户端看时要重点确认四肢摆动方向是否合理**，不合理则改
 `ModelMeta.format_version`（5.0 ↔ 4.x）或对 rotation 取反再验。
+
+---
+
+## 15. 交接说明（Phase 1 → Phase 2）
+
+### 15.1 阶段结论
+
+**Phase 1 已完成并收口。** 可运行产物：`catmaid admin summon/list/remove`、SQLite 持久化、
+重启恢复、玩家上限、依赖缺失自禁用，全部在真实服务端跑过。模型统一使用 `foxmaid`
+（服主提供的 bbmodel，客户端实测确认）。
+
+代码规模：16 个 Java 文件 / 约 1800 行；`git log` 23 个提交。
+
+### 15.2 代码地图（Phase 2 从哪下手）
+
+| 文件 | 职责 | Phase 2 会怎么动 |
+|---|---|---|
+| `CatMaidPlugin` | 装配：config → 依赖自检 → trait 注册 → DB → 仓库/管理器 → 恢复 → 监听/命令 → 定时保存 | 注册新的 Listener（右键、GUI 点击） |
+| `data/Database` | 单连接 + WAL，建三表 | 可能要加 `maid_equipment` 之外的列（好感度等级等） |
+| `data/MaidRepository` | 主线程生成快照 → 单线程 executor 执行 SQL；`loadAll` 同步读 | 新增 UI 状态后记得进快照 |
+| `data/ItemStackCodec` | `serializeAsBytes` / `deserializeBytes`，坏槽位返回 null | 直接复用 |
+| `maid/Maid` | 领域对象，字段对齐 `maids` 表；`npc()`/`entity()` 可空；`applyEquipment()` 把装备位写回实体 | 装备变更后调 `applyEquipment()` + `saveAsync()` |
+| `maid/MaidInventory` | **6 装备位 + 36 存储位**（`withStorage(n)` 可指定容量，Phase 4 按好感度 27/30/33/36 解锁） | GUI 直接读写它，改完标记脏 |
+| `maid/MaidManager` | 召唤 / 移除 / 恢复 / 定时保存 | 交互入口都从这里拿 `Maid` |
+| `maid/MaidTrait` | Citizens trait，持久化只存 `maidId`；`run()` 留空 | Phase 3 在这里挂行为 tick |
+| `maid/ModelApplier` | 反射挂 BetterModel 模型（唯一调用点） | 换模型/换贴图都走这里 |
+| `command/CatMaidCommand` | 命令树 + Tab 补全 | 加子命令 |
+| `util/Messages` | MiniMessage 渲染 + 占位符（解析前替换，防标签注入） | 新文案加进 `messages.yml` |
+| `util/Locations` | Location ↔ 世界名/坐标 编解码 | 复用 |
+
+### 15.3 数据模型（SQLite，`plugins/CatMaid/catmaid.db`）
+
+```sql
+maids(id TEXT PK, owner_uuid, name, model_id, mode, affection REAL,
+      owner_title, alive INT, npc_id INT,
+      home_world, home_x, home_y, home_z, sitting INT, created_at INT)
+maid_items(maid_id, slot, data BLOB, PK(maid_id, slot))   -- slot 0..5 装备，6..41 存储
+maid_stats(maid_id PK, kills, harvests, breeds, shears, milks)
+```
+
+槽位约定（`MaidInventory`）：`0..5` = 主手/副手/头盔/胸甲/护腿/靴子，`6..` = 存储区。
+`maid_items` **全量重写**（写入前先 `DELETE`），不做增量 diff。
+
+### 15.4 运行期不变量（改代码前必须知道）
+
+1. **主线程 vs 单线程 executor 的分工**：`ItemStack` 只能在主线程碰。写库流程是
+   "主线程序列化成字节 → 交给 executor 只做 SQL"。不要在 executor 里读 `ItemStack`。
+2. **保存时机**：玩家下线、`onDisable`（`saveAll` + `flush` 等队列落地）、每 5 分钟全量。
+   服务端被强杀最多丢 5 分钟，这是设计下限，别再往上堆复杂度。
+3. **Citizens 是异步加载 NPC 的**（启动后约 5 秒，见 10.1）：`MaidManager.restoreNpcs(boolean allowRecreate)`
+   每秒轮询、30 秒后才允许重建，并按 `MaidTrait#maidId()` 反查兜底。**任何"查不到 NPC 就新建"的写法都会造出重影。**
+4. **装备变更必须调 `Maid#applyEquipment()`**，否则 NPC 外观不变（数据变了、看着没变，很容易误判成 bug）。
+5. **模型池只有一个 `foxmaid`**：不传模型参数召唤时随机取，池子只有一个就是它。新增模型前先确认贴图在客户端正确。
+
+### 15.5 Phase 2 开工前的六条提醒
+
+1. **右键事件用 `NPCRightClickEvent`**（api-facts 3.x 已核），`getClicker()` 拿玩家；
+   玩家型 NPC 走 Citizens 的事件，不是 `PlayerInteractEntityEvent`。
+2. **玩家型 NPC 的 `isWalking` 恒 false**（3.5）——不要指望用原版移动状态驱动动画。
+3. **TAB / MTSAnticheat / AuthMe** 在生产服可能干扰玩家型 NPC（13.4-3），交互逻辑要能容忍
+   未登录玩家（AuthMe 未登录时右键应静默忽略）。
+4. **GUI 用 `Bukkit.createInventory(holder, size, title)`**，holder 自己实现 `InventoryHolder`，
+   在 `InventoryClickEvent` 里按 holder 类型分派 —— 不要靠标题字符串判断。
+5. **`MaidInventory.MAX_STORAGE = 36`**，但 Phase 4 才按好感度解锁；Phase 2 先全开或先用 27，
+   把 `withStorage()` 的调用点收敛在一处，后面改等级只动那一个地方。
+6. **物品进 GUI 前要 `clone()`**，`MaidInventory#get` 返回的是内部引用，直接塞进 GUI 会被玩家拖走后
+   数据错位。
+
+### 15.6 环境重建（P1 版，取代 8.1 / 8.3 的版本号）
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| Paper | **26.2 build 62** | 与生产服逐字节一致（sha256 `597cb54e…`），`testserver/paper-26.2-62.jar` |
+| BetterModel | **3.6.0** | 与生产一致（sha256 `66b2acc6…`），`plugins/BetterModel.jar` |
+| Citizens | 2.0.44-b4269 | `plugins/Citizens.jar` |
+| CraftEngine | 26.9.2 | 同生产 |
+| JDK | 26.0.2.1（本机）| 编译用 `--release 25`；Gradle **9.9.0**（wrapper 指向腾讯镜像） |
+
+```bash
+# 模型包静态托管（必须与 MC 同时运行）
+cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 127.0.0.1
+
+# 启动
+cd testserver && exec 3<>cmd.fifo && java -Dterminal.jline=false -Xms1G -Xmx2G -jar paper-26.2-62.jar nogui <&3
+
+# 控制台
+python tools/rcon.py "catmaid admin list"
+
+# 停机
+python tools/rcon.py "stop"
+```
+
+**改模型后必做**：删 `plugins/BetterModel/build.zip` → 启动（此刻才重建包）→ 停机 →
+复制成新文件名（`buildN.zip`）→ 改 `server.properties` 的 `resource-pack` 与 `resource-pack-sha1`
+→ 再启动。`/bm reload` **不会**重建 zip（14.4-4）。
+
+### 15.7 模型决策（重要，别再走回头路）
+
+- **唯一启用的模型是 `foxmaid`**，来源 `model_src/foxmaid/`（服主提供，客户端实测正确）。
+- `tools/tlm_to_bbmodel.py` 能把 TLM 素材转成 bbmodel，box UV 布局已从 TLM 字节码校准，
+  但**转换产物的贴图在 BetterModel 上仍不正确**（芙兰、咲夜等实测）；已停用，五个模型文件已从
+  `plugins/BetterModel/models/` 删除。排查结论留在 14.4b，供以后要用时接着查。
+- `tools/bbmodel_preview.py` 可离线渲染 bbmodel 看效果，**但它只能用来看几何轮廓**；
+  它的顶点约定刚修过一次，用它判断"贴图对不对"之前，先拿 `foxmaid` 校准。
+
+### 15.8 未完成与风险
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| 玩家上下线补挂/保存 | 代码已写，**未实测** | `PlayerConnectionListener`；需要真实玩家退出重进 |
+| 行走/坐下动画 | 数据在模型里，**无代码驱动** | `isWalking` 恒 false，Phase 3 用 `animate("walk")` |
+| 背包/装备 GUI | Phase 2 | `MaidInventory` 已就绪，只差界面 |
+| 生产服部署 | 未开始 | Citizens jar 已上传待重启；CatMaid jar + OSS 资源包未动（13.3） |
+| Paper build 62 兼容性 | 已本地验证 | 与生产同版本跑通，`api-version: '26.2'` 被接受 |
+
+### 15.9 交接边界
+
+- **已交付**：可运行插件 jar、23 个提交、`docs/api-facts.md`（含全部踩坑记录）、
+  `tools/rcon.py`、`tools/bbmodel_preview.py`、`testserver/` 现场环境。
+- **不入库**：`testserver/`、`*.bbmodel`、`model_src/`（部署资产 + CC BY-NC-SA 美术资源）。
+- **接手第一步**：起测试服 → `catmaid admin list` 应看到两只 `foxmaid` 女仆 → 进服确认外观 →
+  开始 Phase 2 的右键与 GUI。
