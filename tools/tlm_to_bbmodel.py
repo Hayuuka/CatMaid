@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import sys
 import uuid
 from pathlib import Path
@@ -39,22 +40,43 @@ def png_size(png: bytes) -> tuple[int, int]:
 # ---------- 几何 ----------
 
 def box_face_rects(u: float, v: float, w: float, h: float, d: float) -> dict[str, list[float]]:
-    """box UV 的六面矩形（未处理角点顺序）。"""
+    """box UV 的六面矩形。
+
+    布局（总宽 2w+2d，总高 d+h）：
+
+             ┌─────┬─────┐
+             │ up  │down │          v .. v+d
+    ┌────┬─────┼─────┼─────┐
+    │west│north│east │south│       v+d .. v+d+h
+    └────┴─────┴─────┴─────┘
+      u   u+d   u+d+w  u+2d+w
+
+    这段是从 TLM 自带的 BedrockCubeBox 字节码里读出来的（uvs[] 的 6 个 U 边界 +
+    UV_ORDER_NO_MIRROR 的索引），不是猜的。旧实现把 east/west 位置写反、south 起点写错，
+    是"芙兰朵露贴图全乱"的根因。
+    """
     return {
-        "north": [u + d, v + d, u + d + w, v + d + h],
-        "east": [u, v + d, u + d, v + d + h],
-        "south": [u + d + w, v + d, u + d + w + w, v + d + h],
-        "west": [u + d + w + d, v + d, u + d + w + d + d, v + d + h],
         "up": [u + d, v, u + d + w, v + d],
-        "down": [u + d + w, v, u + d + w + w, v + d],
+        "down": [u + d + w, v, u + d + 2 * w, v + d],
+        "west": [u, v + d, u + d, v + d + h],
+        "north": [u + d, v + d, u + d + w, v + d + h],
+        "east": [u + d + w, v + d, u + 2 * d + w, v + d + h],
+        "south": [u + 2 * d + w, v + d, u + 2 * d + 2 * w, v + d + h],
     }
 
 
 def face_entry(rect: list[float], face: str) -> dict:
-    """Blockbench 的角点顺序：四个侧面正向，up/down 两个角点反序（否则上下两面贴图翻转）。"""
+    """按 Blockbench 的角点约定写 uv。
+
+    侧面正向；up 面整体对角反序；down 面只反 x。
+    这条规则是从用户提供的正确成品 foxmaid.bbmodel 里反推的
+    （其 up 写作 [x2,y2,x1,y1]、down 写作 [x2,y1,x1,y2]），两者不一样，不能一概而论。
+    """
     x1, y1, x2, y2 = rect
-    if face in ("up", "down"):
+    if face == "up":
         x1, y1, x2, y2 = x2, y2, x1, y1
+    elif face == "down":
+        x1, x2 = x2, x1
     return {"uv": [x1, y1, x2, y2], "texture": 0}
 
 
@@ -78,7 +100,9 @@ def convert_cube(cube: dict, bone_pivot: list[float]) -> dict:
     if isinstance(uv, dict):
         rects = per_face_rects(uv, size)
     else:
-        rects = box_face_rects(uv[0], uv[1], size[0], size[1], size[2])
+        # TLM 的 box 展开用的是取整后的尺寸（BedrockCubeBox 里 Mth.floor），不是浮点原值
+        w, h, d = (float(math.floor(abs(v))) for v in size)
+        rects = box_face_rects(uv[0], uv[1], w, h, d)
 
     faces = {face: face_entry(rects[face], face) for face in ALL_FACES if face in rects}
     return {
@@ -106,8 +130,43 @@ def geometry_of(data: dict) -> tuple[dict, int, int]:
     return geo, int(geo.get("texturewidth", 0)), int(geo.get("textureheight", 0))
 
 
+def cube_bounds(cube: dict) -> tuple[list[float], list[float]]:
+    origin = [float(x) for x in cube.get("origin", [0, 0, 0])]
+    size = [abs(float(x)) for x in cube.get("size", [1, 1, 1])]
+    return origin, [origin[i] + size[i] for i in range(3)]
+
+
+def wrapping_shells(bones: list[dict]) -> set[tuple[str, int]]:
+    """找出"把同骨骼里另一个 cube 整个包住、每轴只大一点点"的外壳 cube。
+
+    为什么跳过它：这类壳在 TLM 里是贴在头/身体外面的描边层，尺寸只大 0.25~0.5，
+    贴图又是不透明的实心色块。搬到 BetterModel 后它会把内层的脸整个盖住
+    （实测芙兰朵露 head 的第 4 个 cube 是 8.5 的头壳，正好糊住 8.0 的脸）。
+    全模型里这类壳通常只有一两个，跳过不会伤到正常部件。
+    """
+    marked: set[tuple[str, int]] = set()
+    for bone in bones:
+        cubes = bone.get("cubes", [])
+        for i, cube in enumerate(cubes):
+            o1, t1 = cube_bounds(cube)
+            for j, other in enumerate(cubes):
+                if i == j:
+                    continue
+                o2, t2 = cube_bounds(other)
+                if not all(o1[k] <= o2[k] + 1e-6 and t1[k] >= t2[k] - 1e-6 for k in range(3)):
+                    continue
+                grow = [(t1[k] - o1[k]) - (t2[k] - o2[k]) for k in range(3)]
+                if all(1e-3 < g <= 1.01 for g in grow):
+                    marked.add((bone["name"], i))
+                    break
+    return marked
+
+
 def convert_geometry(geo: dict, name: str, png: bytes, tex_w: int, tex_h: int) -> dict:
     bones = geo.get("bones", [])
+    skip = wrapping_shells(bones)
+    if skip:
+        print(f"[info] {name}: 跳过 {len(skip)} 个包裹型外壳 {sorted(n for n, _ in skip)}")
     by_name = {bone["name"]: bone for bone in bones}
     children: dict[str, list[str]] = {bone["name"]: [] for bone in bones}
     roots: list[str] = []
@@ -124,6 +183,8 @@ def convert_geometry(geo: dict, name: str, png: bytes, tex_w: int, tex_h: int) -
         pivot = [float(x) for x in bone.get("pivot", [0, 0, 0])]
         ids: list[str] = []
         for i, cube in enumerate(bone.get("cubes", [])):
+            if (bone["name"], i) in skip:
+                continue
             element = convert_cube(cube, pivot)
             element["uuid"] = ns_uuid(f"{name}/{bone['name']}/{i}")
             element["name"] = f"{bone['name']}_{i}"

@@ -623,6 +623,53 @@ TLM 用基岩几何 JSON（bones + cubes + box UV），BetterModel 只吃 `.bbmo
    改了模型必须重启；想强制重建就删掉 `plugins/BetterModel/build.zip` 再启动。
    生成后照 4.2 的规矩**换文件名 + 改 `resource-pack` 与 `resource-pack-sha1`**。
 
+### 14.4b 修订（2026-11-10 深夜，芙兰朵露贴图仍错之后）
+
+上一版仍然错，错在两处，都是"看着合理但没验证"造成的：
+
+1. **box UV 的六面位置整体排错**（主因）。之前是凭"标准展开图"的记忆写的：
+   `west` 放最左、`east` 放最右、`south` 起点用 `u+d+w`。实际规则要从 TLM 自己的渲染类里读：
+
+   ```
+   com.github.tartaricacid.simplebedrockmodel.client.bedrock.model.BedrockCubeBox
+   ```
+
+   `javap -c` 里 `uvs[0..5]` 是六个 U 边界、`uvs[6..8]` 是三个 V 边界，
+   `UV_ORDER_NO_MIRROR[face] = [uStartIdx, uEndIdx, vStartIdx, vEndIdx]`。解出来是：
+
+   ```
+            ┌─────┬─────┐
+            │ up  │down │        v .. v+d
+   ┌────┬────┼─────┼─────┐
+   │west│north│east │south│     v+d .. v+d+h
+   └────┴────┴─────┴─────┘
+     u   u+d  u+d+w  u+2d+w
+   ```
+
+   即：**总宽 2w+2d、总高 d+h；第二行依次是 west(d) north(w) east(d) south(w)**，
+   顶行 up/down 各宽 w 高 d，起点分别是 u+d 和 u+d+w。旧实现把 east 和 west 换了位置、
+   south 起点少算了一个 d，所以整张贴图整体错位（不是细节偏移，是所有面都错）。
+   验证方式：芙兰 338 个 cube 的 `u+2d+2w` 全部 ≤ 144（贴图宽），旧公式会大量越界。
+
+2. **up / down 两个面的角点写法不一样**，不能一概而论。从用户提供的正确成品
+   `model_src/foxmaid/foxmaid.bbmodel` 里反推：`up` 写作 `[x2,y2,x1,y1]`（对角反序），
+   `down` 写作 `[x2,y1,x1,y2]`（只反 x）。旧实现两个都做对角反序，down 会上下颠倒。
+
+3. **包裹型外壳必须跳过**（新发现的独立问题）。芙兰和咲夜的 `head` 骨骼里各有一个
+   比头大 0.5 的立方体（8.5 vs 8.0），贴图是不透明的金色实心块，尺寸刚好把内层的脸整个盖住。
+   在 TLM 里它是描边/头发层，搬进 BetterModel 就是一块挡住脸的金板
+   （实测：去掉它脸部贴图立刻正常显示）。转换器现在会自动识别"把同骨骼内另一个 cube
+   整包住、每轴只大 ≤1"的壳并跳过，全模型里这类只有 1 个，不会误伤。
+
+4. **新增 `tools/bbmodel_preview.py`**：没有客户端时的自检手段。正交投影 + z-buffer
+   软渲染，支持六视图和拼图输出。
+
+   **这个工具自己也踩了一个坑，值得记下来**：第一版把每个面的起始顶点写成"右下角"，
+   导致渲染结果整体翻转 180°，看起来"贴图全乱"，我据此误判了两次。正确约定是
+   Blockbench 的每个面按「从外面看的 左上 → 左下 → 右下 → 右上」排列，uv 的 `[x1,y1]`
+   对应第一个顶点。修正后同一份模型渲染出的灵梦立刻有了正常的脸和巫女服。
+   **教训：自检工具本身必须先拿已知正确的样本（酒狐）校准，否则它会稳定地骗人。**
+
 ### 14.5 缺口：**动画需要代码驱动**
 
 
