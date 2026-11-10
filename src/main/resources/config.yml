@@ -1,22 +1,20 @@
 # CatMaid 配置（Phase 1）
-# 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致
 general:
   max-per-player: 2
   initial-affection: 10
 
-# 女仆模型：由 tools/tlm_to_bbmodel.py 从车万女仆（TLM）素材转换而来，见 docs/api-facts.md 第 14 节
+# 女仆模型池：召唤时若未指定模型，从这里随机取一个
+# 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致
+#
+# 目前只启用 foxmaid：这是唯一经过客户端实测确认贴图正确的模型
+# （model_src/foxmaid/ 由服主提供）。其余从 TLM 素材自动转换的模型在 BetterModel 上
+# 仍有贴图问题，暂停使用，见 docs/api-facts.md 第 14 节。
+#
 # 美术资源为 CC BY-NC-SA 4.0：仅非商用服可用，须署名 TartaricAcid 与车万女仆项目
 models:
   - foxmaid
-  - hakurei_reimu
-  - kirisame_marisa
-  - konpaku_youmu
-  - izayoi_sakuya
-  - flandre_scarlet
 
 # 随机名字池，召唤时从中取一个
 names:
   - 小铃
   - 汐音
-  - 千夜
-  - 缀理

@@ -2,8 +2,9 @@
 # 属于部署资产，按 docs/api-facts.md 8.4 不入库，环境可按 8.1 重建
 testserver/
 
-# 模型资产与资源包产物（部署资产）
+# 模型资产与资源包产物（部署资产，TLM 美术资源为 CC BY-NC-SA 4.0，不入库）
 *.bbmodel
+model_src/
 plugins/BetterModel/build*.zip
 
 # Gradle / 构建产物
