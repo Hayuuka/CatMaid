@@ -33,6 +33,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private ModelRegistry modelRegistry;
     private ModelApplier modelApplier;
     private BukkitTask saveTask;
+    private BukkitTask restoreTask;
 
     public static CatMaidPlugin get() {
         return instance;
@@ -62,7 +63,7 @@ public final class CatMaidPlugin extends JavaPlugin {
         try {
             database = new Database(new File(getDataFolder(), "catmaid.db"));
         } catch (SQLException | IllegalStateException e) {
-            getLogger().log(Level.SEVERE, "[CatMaid] 初始化 SQLite 失败，插件停止工作", e);
+            getLogger().log(Level.SEVERE, "初始化 SQLite 失败，插件停止工作", e);
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -73,7 +74,9 @@ public final class CatMaidPlugin extends JavaPlugin {
         maidManager = new MaidManager(repository, modelRegistry, modelApplier, getConfig(), getLogger());
 
         maidManager.loadAll();
-        maidManager.restoreNpcs();
+        // Citizens 异步加载 NPC（启动后数秒才完成），BetterModel 的模型表也在 delayed init 之后才可用。
+        // 因此按秒轮询恢复；30 秒后仍找不到 NPC 才认为真的丢了，重建兜底。
+        scheduleRestore();
 
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(maidManager), this);
 
@@ -88,7 +91,7 @@ public final class CatMaidPlugin extends JavaPlugin {
         saveTask = getServer().getScheduler().runTaskTimer(this, () -> maidManager.saveAll(),
                 20L * 300, 20L * 300);
 
-        getLogger().info("[CatMaid] 已启用，当前女仆 " + maidManager.all().size() + " 只");
+        getLogger().info("已启用，当前女仆 " + maidManager.all().size() + " 只");
     }
 
     @Override
@@ -96,6 +99,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         if (saveTask != null) {
             saveTask.cancel();
             saveTask = null;
+        }
+        if (restoreTask != null) {
+            restoreTask.cancel();
+            restoreTask = null;
         }
         if (maidManager != null) {
             maidManager.saveAll();
@@ -107,7 +114,20 @@ public final class CatMaidPlugin extends JavaPlugin {
             database.close();
         }
         instance = null;
-        getLogger().info("[CatMaid] 已停止");
+        getLogger().info("已停止");
+    }
+
+    /** 每秒推进一轮恢复；30 轮（约 30 秒）后仍找不到 NPC 才允许重建。 */
+    private void scheduleRestore() {
+        int[] attempts = {0};
+        restoreTask = getServer().getScheduler().runTaskTimer(this, () -> {
+            attempts[0]++;
+            boolean done = maidManager.restoreNpcs(attempts[0] >= 30);
+            if (done && restoreTask != null) {
+                restoreTask.cancel();
+                restoreTask = null;
+            }
+        }, 1L, 20L);
     }
 
     private boolean requirePlugin(String name) {
@@ -126,7 +146,7 @@ public final class CatMaidPlugin extends JavaPlugin {
                     TraitInfo.create(MaidTrait.class).withName("catmaid"));
         } catch (Throwable t) {
             // /reload 或重复注册时会抛，已有注册即可继续
-            getLogger().log(Level.FINE, "[CatMaid] catmaid trait 已注册，跳过", t);
+            getLogger().log(Level.FINE, "catmaid trait 已注册，跳过", t);
         }
     }
 }

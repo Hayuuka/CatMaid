@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
@@ -38,6 +39,8 @@ public final class MaidManager {
     private final Logger logger;
 
     private final Map<UUID, Maid> maids = new ConcurrentHashMap<>();
+    /** 还没挂上 NPC 的女仆，由 CatMaidPlugin 的轮询任务逐个消化。 */
+    private final Set<UUID> awaitingNpc = ConcurrentHashMap.newKeySet();
 
     public MaidManager(MaidRepository repository, ModelRegistry models, ModelApplier modelApplier,
                        FileConfiguration config, Logger logger) {
@@ -54,39 +57,72 @@ public final class MaidManager {
     public void loadAll() {
         for (Maid maid : repository.loadAll()) {
             maids.put(maid.getId(), maid);
+            if (maid.isAlive()) {
+                awaitingNpc.add(maid.getId());
+            }
         }
-        logger.info("[CatMaid] 已载入 " + maids.size() + " 只女仆");
+        logger.info("已载入 " + maids.size() + " 只女仆");
     }
 
     /**
-     * onEnable 调用：把 alive 的女仆 NPC 恢复出来。
+     * 恢复一轮：把还在等待的 alive 女仆挂上 NPC。
      *
-     * <p>正常情况下 Citizens 已自行恢复 NPC，这里的重建分支是兜底（NPC 被其它插件清理/存档丢失）。
+     * <p>Citizens 是异步加载 NPC 的（启动后数秒才完成），所以这里不能"查不到就重建"，
+     * 必须由调用方轮询，等 Citizens 就绪；{@code allowRecreate} 为 true 时才允许重建兜底。
+     *
+     * @return 是否所有待恢复的女仆都已处理完（true 表示轮询可以停了）
      */
-    public void restoreNpcs() {
-        for (Maid maid : maids.values()) {
-            if (!maid.isAlive()) {
-                continue; // 铃铛态不生成实体
+    public boolean restoreNpcs(boolean allowRecreate) {
+        boolean pending = false;
+        for (UUID maidId : awaitingNpc) {
+            Maid maid = maids.get(maidId);
+            if (maid == null || !maid.isAlive()) {
+                awaitingNpc.remove(maidId);
+                continue;
             }
-            NPC npc = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
+            NPC npc = findNpc(maid);
             if (npc == null) {
-                npc = recreate(maid);
-            }
-            MaidTrait trait = npc.getOrAddTrait(MaidTrait.class);
-            trait.bind(maid);
-            maid.setNpcId(npc.getId());
-
-            if (!npc.isSpawned()) {
-                Location target = maid.getHome() != null ? maid.getHome() : fallbackSpawn();
-                if (target == null || target.getWorld() == null) {
-                    logger.warning("[CatMaid] 女仆 " + maid.getName() + " 找不到可用世界，跳过生成");
+                if (!allowRecreate) {
+                    pending = true;
                     continue;
                 }
-                npc.spawn(target);
+                npc = recreate(maid);
             }
-            modelApplier.apply(npc, maid.getModelId());
-            maid.applyEquipment();
+            attach(maid, npc);
+            awaitingNpc.remove(maidId);
         }
+        return !pending;
+    }
+
+    /** 先按 id 查；id 对不上（Citizens 存档重排 / NPC 被清理后又重建过）时按 trait 里的 maidId 反查。 */
+    private NPC findNpc(Maid maid) {
+        NPC byId = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
+        if (byId != null) {
+            return byId;
+        }
+        for (NPC candidate : CitizensAPI.getNPCRegistry()) {
+            MaidTrait trait = candidate.getTraitNullable(MaidTrait.class);
+            if (trait != null && maid.getId().toString().equals(trait.maidId())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** 绑定 trait、按需生成、写回模型与装备。 */
+    private void attach(Maid maid, NPC npc) {
+        npc.getOrAddTrait(MaidTrait.class).bind(maid);
+        maid.setNpcId(npc.getId());
+        if (!npc.isSpawned()) {
+            Location target = maid.getHome() != null ? maid.getHome() : fallbackSpawn();
+            if (target == null || target.getWorld() == null) {
+                logger.warning("女仆 " + maid.getName() + " 找不到可用世界，跳过生成");
+                return;
+            }
+            npc.spawn(target);
+        }
+        modelApplier.apply(npc, maid.getModelId());
+        maid.applyEquipment();
     }
 
     // ---- 召唤 / 移除 ----
@@ -104,7 +140,7 @@ public final class MaidManager {
     public Maid summonFor(OfflinePlayer owner, String modelId, Location loc) {
         int globalCap = config.getInt("performance.global-maid-cap", 60);
         if (maids.size() >= globalCap) {
-            logger.warning("[CatMaid] 已达全局女仆上限 " + globalCap + "，拒绝召唤");
+            logger.warning("已达全局女仆上限 " + globalCap + "，拒绝召唤");
             return null;
         }
         if (byOwner(owner.getUniqueId()).size() >= maxPerPlayer()) {
@@ -112,7 +148,7 @@ public final class MaidManager {
         }
         String resolvedModel = modelId == null || modelId.isBlank() ? models.random() : modelId;
         if (resolvedModel == null) {
-            logger.warning("[CatMaid] config.yml 的 models 为空，无法召唤");
+            logger.warning("config.yml 的 models 为空，无法召唤");
             return null;
         }
 
@@ -140,7 +176,7 @@ public final class MaidManager {
         }
 
         if (!npc.spawn(spawn)) {
-            logger.warning("[CatMaid] NPC 生成失败，位置：" + spawn);
+            logger.warning("NPC 生成失败，位置：" + spawn);
             npc.destroy();
             return null;
         }
@@ -217,7 +253,7 @@ public final class MaidManager {
     // ---- 内部 ----
 
     private NPC recreate(Maid maid) {
-        logger.warning("[CatMaid] 女仆 " + maid.getName() + " 的 NPC 已丢失，正在重建");
+        logger.warning("女仆 " + maid.getName() + " 的 NPC 已丢失，正在重建");
         NPC npc = CitizensAPI.getNPCRegistry().createNPC(EntityType.PLAYER, maid.getName());
         npc.setProtected(false);
         maid.setNpcId(npc.getId());

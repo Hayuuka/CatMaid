@@ -24,7 +24,8 @@ public final class ModelApplier {
 
     private static final String MODEL_TRAIT = "kr.toxicity.model.bukkit.compatibility.citizens.trait.ModelTrait";
     private static final String BETTER_MODEL_API = "kr.toxicity.model.api.BetterModel";
-    private static final String MODEL_RENDERER = "kr.toxicity.model.api.ModelRenderer";
+    // 渲染器实际类名（api-facts 已更正）：kr.toxicity.model.api.data.renderer.ModelRenderer。
+    // 这里不写死它，改为按名字找 setRenderer(单参数)，这样渲染器换包也不至于整条链路失效。
 
     private final Logger logger;
     private boolean warned;
@@ -47,13 +48,12 @@ public final class ModelApplier {
         try {
             ClassLoader loader = betterModel.getClass().getClassLoader();
             Class<?> traitClass = Class.forName(MODEL_TRAIT, true, loader);
-            Class<?> rendererClass = Class.forName(MODEL_RENDERER, true, loader);
             Class<?> apiClass = Class.forName(BETTER_MODEL_API, true, loader);
 
             Method getOrAddTrait = NPC.class.getMethod("getOrAddTrait", Class.class);
             Object trait = getOrAddTrait.invoke(npc, traitClass);
             if (trait == null) {
-                logger.warning("[CatMaid] BetterModel 未能为 NPC " + npc.getId() + " 创建 model trait");
+                logger.warning("BetterModel 未能为 NPC " + npc.getId() + " 创建 model trait");
                 return false;
             }
 
@@ -62,11 +62,15 @@ public final class ModelApplier {
                 Method modelOrNull = apiClass.getMethod("modelOrNull", String.class);
                 renderer = modelOrNull.invoke(null, modelId);
                 if (renderer == null) {
-                    logger.warning("[CatMaid] BetterModel 找不到模型 " + modelId + "，请确认 plugins/BetterModel/models/ 内有该模型");
+                    logger.warning("BetterModel 找不到模型 " + modelId + "，请确认 plugins/BetterModel/models/ 内有该模型");
                 }
             }
 
-            Method setRenderer = traitClass.getMethod("setRenderer", rendererClass);
+            Method setRenderer = findSetRenderer(traitClass);
+            if (setRenderer == null) {
+                logger.warning("ModelTrait 上找不到 setRenderer 方法，BetterModel 版本可能已变");
+                return false;
+            }
             setRenderer.invoke(trait, renderer);
             return renderer != null;
         } catch (ReflectiveOperationException | LinkageError e) {
@@ -75,10 +79,19 @@ public final class ModelApplier {
         }
     }
 
+    private Method findSetRenderer(Class<?> traitClass) {
+        for (Method method : traitClass.getMethods()) {
+            if (method.getName().equals("setRenderer") && method.getParameterCount() == 1) {
+                return method;
+            }
+        }
+        return null;
+    }
+
     private void warnOnce(String message) {
         if (!warned) {
             warned = true;
-            logger.log(Level.WARNING, "[CatMaid] " + message);
+            logger.log(Level.WARNING, "" + message);
         }
     }
 }
