@@ -4,16 +4,23 @@ prefix: "<light_purple>[CatMaid]</light_purple> "
 no-permission: "<red>你没有权限这样做。"
 player-only: "<red>该命令只能由玩家执行。"
 player-not-found: "<red>找不到玩家：{player}"
+model-unknown: "<yellow>模型 {model} 不在 config.yml 的 models 列表里，仍会尝试加载。"
+world-unavailable: "<red>服务器没有已加载的世界，无法确定生成位置。"
+summon-offline-note: "<gray>玩家 {player} 没有进服记录，按名称创建离线档案。"
 
-depend-missing: "<red>缺少必需依赖 {name}，猫娘女仆已停止工作。"
-
-summon-success: "<green>已召唤女仆 {name}（模型 {model}）。"
-summon-max: "<red>你最多只能拥有 {max} 只女仆。"
+summon-success: "<green>已召唤女仆 {name}（属于 {owner}，模型 {model}）。"
+summon-max: "<red>该玩家最多只能拥有 {max} 只女仆。"
 summon-no-model: "<red>配置里没有任何可用模型，请检查 config.yml 的 models。"
 remove-success: "<yellow>已送走女仆 {name}。"
-maid-not-found: "<red>找不到这个女仆。"
+maid-not-found: "<red>找不到这个女仆：{name}"
 
 list-header: "<light_purple>女仆列表（共 {count} 只）："
 list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
 state-alive: "<green>存活"
 state-bell: "<gray>铃铛"
+
+help:
+  - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> Phase 1 可用命令："
+  - "<gray>/catmaid admin summon <玩家> [模型]"
+  - "<gray>/catmaid admin list [玩家]"
+  - "<gray>/catmaid admin remove <玩家|女仆UUID>"
