@@ -473,3 +473,84 @@ Phase 1 最初的"查不到就重建"直接造出了重影 NPC。现行做法：
 | 新增 10.1 Citizens 异步加载 NPC、10.2 Trait 持久化形状与"`model:` 即挂载成功"的证据链、10.3 离线玩家解析策略 |
 | 更正 3.1 的 `ModelRenderer` 全限定名，记录 `modelOrNull` 在 3.7.0 仍有效 |
 | Phase 1 验收：4 项服务端通过、1 项待客户端；关闭 8.4 的 `api-version` 遗留项 |
+
+---
+
+## 13. 生产环境适配清单（2026-11-10 实地勘察）
+
+生产服：`baiyuanljh.fun`（Windows Server 2019 10.0.17763，`Administrator`），根目录 `E:/Minecraft/catnest_new`。
+勘察方式：SSH 只读检查（`dir` / `javap` / `findstr`），未改动任何运行中状态。
+
+### 13.1 基线对照
+
+| 项 | 生产服 | 本地测试服 | 判断 |
+|---|---|---|---|
+| 服务端 | Paper **26.2 build 62** | Paper 26.2 build 135 | ⚠ 见 13.4-1 |
+| Java | **26.0.1** | 26.0.2.1 | ✅ 产物是 Java 25 字节码，26 可运行 |
+| 端口 / 模式 | 22024 / **online-mode=true** / max 20 / view-distance 10 | 25566 / 离线 | ⚠ 见 13.4-2 |
+| BetterModel | **3.6.0-paper** | 3.7.0-SNAPSHOT-541 | ✅ `javap` 逐个核对：`ModelTrait` 路径、`BetterModel.modelOrNull(String)`、`setRenderer(ModelRenderer)` 签名完全一致，`ModelApplier` 的反射层通用 |
+| CraftEngine | 26.9.2 | 26.9.2 | ✅ 同版本 |
+| Citizens | **原本没有**（全盘 `dir /s E:/Minecraft/*citizens*` 无结果） | 2.0.44-b4269 | 已补：见 13.3 |
+| 启动方式 | `start.bat` = 裸 `java -Xms5G -Xmx5G ... -jar Paper-26.2-build62.jar nogui` + `pause` | 同 | ⚠ **无自动重启循环**，杀进程后必须有人手动起 |
+| 模型资产 | blue_wizard / demon_knight / wither_messenger(+png) | steve / demon_knight / blue_wizard | ⚠ 无女仆模型，需另放 |
+
+### 13.2 资源包链路（与测试服完全不同）
+
+`server.properties` 的 `resource-pack` **为空**，生产走 CraftEngine 的 workflow：
+
+```yaml
+# plugins/CraftEngine/config.yml
+resource-pack:
+  workflows:
+    default:
+      trigger: reload_pack
+      steps: [generate, validate, zip -> ./generated/resource_pack.zip, send_pack: {pack: default}]
+  packs:
+    default:
+      default: true
+      type: external
+      url: "https://catnest.oss-cn-shenzhen.aliyuncs.com/catnestv6.1.zip"
+  merge-external-zip-files:
+    - "BetterModel/build.zip"
+```
+
+即：BM 的 `build.zip`（11/02，1.07MB）被合进 CE 的 `generated/resource_pack.zip`（11/06，9.3MB），
+再由 workflow **手动上传到阿里云 OSS**，客户端拿的是那个静态 URL。
+
+**女仆模型上线的正确姿势**（对应 P0 的 4.2 教训）：
+
+1. 女仆 bbmodel 放进 `plugins/BetterModel/models/`（必须自带贴图，见 4.4）；
+2. `/bm reload` 重建 `plugins/BetterModel/build.zip`；
+3. `/ce workflow default`（或 `/ce reload pack`）重建 `generated/resource_pack.zip`；
+4. 把新 zip **换名**上传 OSS（如 `catnestv6.2.zip`），改 `config.yml` 里的 `url`；
+5. `/ce reload` + 玩家重新进服。
+
+只做 1-3 而不做 4，客户端永远看不到新模型——它读的是 OSS 上的旧包。
+
+### 13.3 部署步骤（Phase 1 产物）
+
+1. **重启前备份**：`plugins\`（至少 `plugins\CatMaid\`、`plugins\Citizens\`、`plugins\BetterModel\`）；
+   生产根目录已有 7 个 `hs_err_pid*.log` 崩溃转储，说明历史上有过崩溃，备份别省。
+2. 上传 `CatMaid-0.1.0.jar` 到 `plugins\`。
+3. **Citizens 已上传**（2026-11-10）：`plugins\Citizens-2.0.44-b4269.jar`，
+   4,393,754 字节，MD5 `bfe80f47887584cc5ce31aa25b9ed495`（与本地发布件一致）。**未重启，尚未加载**。
+4. 重启服务端（必须在 RDP 控制台里跑 `start.bat`，见 13.1 的"无自动重启"）。
+5. 首次启动看三件事：Citizens 下载依赖库（需外网）、CatMaid 打印「已载入 0 只女仆」、
+   `plugin.yml` 的 `api-version: '26.2'` 在 build 62 上是否被接受（本项**未验证**）。
+6. 女仆数据落在 `plugins\CatMaid\catmaid.db`（SQLite，WAL），备份时连 `-wal`/`-shm` 一起带。
+
+### 13.4 已知风险（按严重度）
+
+1. **Paper build 62 vs 编译用的 build 135**：`paper-api:26.2.build.62-stable` 在 repo.papermc.io **已 404**
+   （旧 build 的制品下架），无法针对性编译。缓解：插件只用了长期稳定 API（`ItemStack#serializeAsBytes`、
+   `EntityEquipment`、`Particle`/`Sound`、调度器、`OfflinePlayer` 系列），风险可控但**首次部署应选没人的时段试启动**。
+   若出现 `NoSuchMethodError`，按报错换等价旧 API 即可。
+2. **online-mode=true**：`/catmaid admin summon` 只认真实进过服的玩家名（见 10.3），线上不能随手写名字。
+3. **玩家型 NPC 与其他插件的潜在冲突**（均未实测）：
+   - **TAB** 接管玩家列表/名牌，可能覆盖 NPC 的头顶名字；
+   - **MTSAnticheat** 可能把玩家型 NPC 的强制位移判为可疑；
+   - **AuthMe**：未登录玩家的右键交互需过滤（当前 `MaidInteractListener` 尚未实现，Phase 2 需考虑）；
+   - **Multiverse-Core**：多世界下 `home` 的世界名要能正确解析（`Locations.toBukkit` 世界未加载时返回 null，已有兜底）。
+4. **`start.bat` 无自动重启**：CatMaid 的保存依赖 `onDisable`（`saveAll` + `flush`）+ 每 5 分钟全量保存。
+   若服务端被强杀，最多丢 5 分钟改动；这已是当前设计下限，不额外加复杂度。
+5. 生产服已有 `Vault`/`LuckPerms`/`MythicMobs`/`NpcPlugin-Paper`，但 CatMaid **不依赖**它们（agent.md 1.4）。
