@@ -4,7 +4,9 @@
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
 > 最后更新：2026-11-10
 
-**Phase 0 状态：已完成**（客户端实机验收通过）。四条关键结论：
+**Phase 0 状态：已完成**（客户端实机验收通过）。**Phase 1 状态：已完成**（服务端 5 项验收通过，模型外观待客户端实测，详见第 11 节）。
+
+Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
 2. 资源包走**双包分离**：BM 包用原版 `resource-pack` 强制下发，CE 只发自己的包（4.1）。
 3. 女仆模型必须**自带贴图**；玩家型 bbmodel 会回落彩虹调试皮肤（4.4）。
@@ -85,6 +87,11 @@ kr.toxicity.model.bukkit.compatibility.citizens.trait.ModelTrait
 ModelTrait trait = npc.getOrAddTrait(ModelTrait.class);      // trait 名 "model"，Citizens 已注册
 trait.setRenderer(BetterModel.modelOrNull(modelId));         // 模型名不存在时返回 null → 即移除模型
 ```
+
+> **[P1 修订 2026-11-10]** `ModelRenderer` 的实际全限定名是 `kr.toxicity.model.api.data.renderer.ModelRenderer`
+> （本文件早先只写类名、未记包路径，实现时误写成 `kr.toxicity.model.api.ModelRenderer` 导致 `ClassNotFoundException`）。
+> 现在的 `ModelApplier` 不再写死该类名，改为按名字查找 `setRenderer(单参数)` 方法，渲染器再换包也不会整条链路失效。
+> 另：`modelOrNull` 在 3.7.0 仍存在（`javap` 复核），但 `registryOrNull(org.bukkit.entity.Entity)` 已移除，只剩 UUID / PlatformEntity / BaseEntity 三个重载。
 
 模型查询 API：
 
@@ -380,7 +387,89 @@ python tools/rcon.py "stop"
 
 ### 8.5 遗留问题（按优先级，Phase 1 起需持续关注）
 
-1. **CE 自带 `send_pack` 在本次未生效**（4.3）——分离方案已绕开；若回到单包合并路线必须先解决。
+1. ~~**CE 自带 `send_pack` 在本次未生效**（4.3）~~——分离方案已绕开；若回到单包合并路线必须先解决。
 2. **行走动画自动触发不可用**（3.5）——Phase 3 用 `animate("walk")` / `stopAnimation("walk")` 驱动。
-3. **BetterModel 编译坐标与运行时不一致**（第 2 节）——Phase 1 建工程时二选一：本地 jar 文件依赖，或用 1.15.2 API + `ModelApplier` 单点隔离。
-4. **JDK 25 toolchain 缺失**——Phase 1 首次 `gradlew shadowJar` 会触发下载，注意本机网络。
+3. ~~**BetterModel 编译坐标与运行时不一致**（第 2 节）~~——Phase 1 采用方案 (b)+反射：不引入编译依赖，`ModelApplier` 单点隔离，见第 9 节。
+4. ~~**JDK 25 toolchain 缺失**~~——改用 `--release 25` 编译，无需 toolchain，见第 9 节。
+
+---
+
+## 9. Phase 1 构建与运行期工程事实（2026-11-10 落地）
+
+第 2 节的两条"决策建议"已定案，后续阶段照此执行：
+
+| 项 | 结论 | 依据 |
+|---|---|---|
+| Gradle | **9.9.0**（wrapper 的 distributionUrl 指向腾讯云镜像） | Gradle 8.14.3 启动即失败、报错只有 `26.0.2.1`——它不认 Java 26（8.x 官方上限是 Java 24）；本机 `services.gradle.org` 还会被 SSL 拒绝 |
+| shadow 插件 | **9.6.1** | 蓝图写的 8.3.6 只兼容 Gradle 8.x |
+| Java 版本 | `options.release = 25`，不写 toolchain | 本机只有 JDK 26；toolchain 25 需联网自动下载，不稳定。javac 26 用 `--release 25` 可产出 Java 25 字节码，运行期与蓝图一致 |
+| Citizens 依赖 | `citizens-main:2.0.44-SNAPSHOT` + `isTransitive = false` | 它的传递依赖 `net.byteflux:libby-bukkit:1.1.5` 在 mavenCentral / papermc / citizens 三个仓库都不存在；编译只需要 API 类 |
+| BetterModel 依赖 | **不引入编译依赖**，唯一调用点 `maid/ModelApplier` 走反射 | Maven Central 无 `ModelTrait`；BetterModel 是 paper-plugin，classloader 隔离，直接 import 运行期会 `NoClassDefFoundError` |
+| 反射取类方式 | `Bukkit.getPluginManager().getPlugin("BetterModel").getClass().getClassLoader()` 后 `Class.forName` | 跨 paper-plugin classloader 的唯一可靠途径 |
+| api-version | `'26.2'` **被接受** | 启动日志无告警，8.4 的遗留项关闭 |
+| 依赖声明 | `softdepend: [Citizens, BetterModel, CraftEngine]`，不用 `depend` | `depend` 缺失时 Paper 以英文报错直接拒绝加载，无法满足"自禁用并打印中文原因"的验收项；softdepend 同样保证加载顺序 |
+
+## 10. Phase 1 实测新增的 API 行为事实
+
+### 10.1 Citizens 是**异步**加载 NPC（重要）
+
+启动时间线（实测，6 个 NPC）：`[Citizens] Enabling` 22:16:01 → CatMaid onEnable 22:16:02 →
+`[Citizens] 已载入 6 个NPC` **22:16:07**。
+
+即 `CitizensAPI.getNPCRegistry().getById(id)` 在 onEnable、甚至延后 1 tick 都仍可能返回 null。
+Phase 1 最初的"查不到就重建"直接造出了重影 NPC。现行做法：
+
+- 每秒轮询一轮，30 轮后仍找不到才允许重建（`MaidManager#restoreNpcs(boolean allowRecreate)`）；
+- 按 id 查不到时，遍历注册表用 `MaidTrait#maidId()` 反查（Citizens 存档重排后 id 会对不上）。
+
+### 10.2 Trait 持久化形状
+
+`plugins/Citizens/saves.yml` 中形如：
+
+```yaml
+  traits:
+    catmaid:
+      maid: d36c5b04-4051-4e0a-9294-1995deede084
+  traitnames: scoreboardtrait,spawned,catmaid,skintrait,leashedtrait,location,type,inventory,chunktickettrait
+```
+
+`TraitInfo.create(MaidTrait.class).withName("catmaid")` 注册成功后即可被 `getOrAddTrait` 使用；
+`DataKey` 的键就是 `MaidTrait#save` 里写的 `maid`。模型挂载成功时同一 NPC 的 `traits` 里还会出现 `model: <模型名>`——
+**这是判断"模型真的挂上了"最省事的服务端证据**（无需客户端）。
+
+### 10.3 管理员命令与离线玩家
+
+离线模式服没有权威 usercache，`Bukkit.getOfflinePlayerIfCached` 常为 null。Phase 1 的 `/catmaid admin summon`
+按"在线 → usercache → （仅当 `getOnlineMode()==false`）按名称建档"解析，在线模式仍拒绝，避免造出永远匹配不上真人的 UUID。
+
+## 11. Phase 1 验收记录（2026-11-10）
+
+环境：Paper 26.2 build 135 + Citizens 2.0.44-b4269 + BetterModel 3.7.0-SNAPSHOT-541 + CraftEngine 26.9.2，控制台驱动走 RCON。
+
+| 验收项 | 结果 | 依据 |
+|---|---|---|
+| `/catmaid admin summon <玩家> [模型]` 生成带模型的 NPC、头顶名字 | **✅ 服务端通过 / ⏳ 渲染待客户端实测** | RCON 召唤成功；Citizens 存档出现 `model: demon_knight` / `model: steve` 与 `catmaid: maid: <uuid>`；DB 落库完整（name/model/mode/affection/home/npc_id） |
+| `/catmaid admin list` 显示女仆与归属 | **✅ 通过** | 输出 `千夜 \| 主人 Hayuuka \| steve \| 好感 10.0 \| 存活`，共 2 只 |
+| 重启服务器 → 女仆仍在原位置、名字/模型正确 | **✅ 通过** | 重启后 `已载入 2 只女仆`，无"NPC 已丢失"告警；npc_id 6/7 与 Citizens 存档一致；坐标 16/72/0 未变 |
+| `/catmaid admin remove` 彻底删除（DB + NPC + 重启不复活） | **✅ 通过** | 删除后 DB 行消失、Citizens 存档中该 NPC 消失；再重启仍是 1 只 |
+| 卸载 Citizens 启动 → 自禁用并打印中文原因 | **✅ 通过** | 移走 Citizens.jar 后控制台输出 `缺少必需依赖 Citizens，猫娘女仆已停止工作。` 随后 `Disabling CatMaid` |
+| 上限（`max-per-player` 默认 2） | **✅ 通过** | 第 3 次召唤输出 `该玩家最多只能拥有 2 只女仆。` |
+
+**未覆盖 / 待人工确认**：客户端侧模型外观与名牌显示（需真实客户端进服）；
+`PlayerConnectionListener` 的上线补挂/下线保存分支（需玩家真实上下线，本轮无客户端）。
+
+### 11.1 本轮踩到并已修掉的问题
+
+1. `ModelRenderer` 包路径记错（见 3.1 修订）。
+2. Citizens 异步加载导致的重影 NPC（见 10.1）。
+3. `messages.yml` 重写时漏掉 `depend-missing`，缺依赖时打印裸 key。
+4. 日志里 `[CatMaid]` 前缀重复（插件 logger 已自带）。
+
+## 12. 修订记录（2026-11-10 Phase 1）
+
+| 内容 |
+|---|
+| 构建链定案：Gradle 9.9.0 + shadow 9.6.1 + `--release 25`；Citizens 关闭传递依赖；BetterModel 改反射（第 9 节） |
+| 新增 10.1 Citizens 异步加载 NPC、10.2 Trait 持久化形状与"`model:` 即挂载成功"的证据链、10.3 离线玩家解析策略 |
+| 更正 3.1 的 `ModelRenderer` 全限定名，记录 `modelOrNull` 在 3.7.0 仍有效 |
+| Phase 1 验收：4 项服务端通过、1 项待客户端；关闭 8.4 的 `api-version` 遗留项 |
