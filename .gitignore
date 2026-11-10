@@ -1,0 +1,29 @@
+# 本地测试服运行目录（Paper jar / 插件 / libraries / 存档 / 资源包，约 400MB）
+# 属于部署资产，按 docs/api-facts.md 8.4 不入库，环境可按 8.1 重建
+testserver/
+
+# 模型资产与资源包产物（部署资产）
+*.bbmodel
+plugins/BetterModel/build*.zip
+
+# Gradle / 构建产物
+.gradle/
+build/
+out/
+bin/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# 系统与工具临时文件
+.DS_Store
+Thumbs.db
+*.log
+cmd.fifo
+
+# AI 助手会话数据
+.workbuddy/
