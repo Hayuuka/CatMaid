@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""TLM（车万女仆）基岩版几何 → Blockbench .bbmodel（BetterModel 可直接加载）
+"""TLM（车万女仆）模型 → Blockbench .bbmodel（BetterModel 可直接加载）
 
-背景：TLM 的角色模型是基岩几何 JSON（bones + cubes，box UV），BetterModel 只吃 .bbmodel。
-本脚本做格式搬运，不改几何数据：
+处理三件事：
+  1. 基岩几何（bones/cubes）→ bbmodel 的 outliner/elements
+  2. UV：box UV 展开成逐面 UV；up/down 面按 Blockbench 的角点反序写，否则上下两面贴图会翻
+  3. geckolib 动画 json → bbmodel 的 animations（TLM 的模型和动画本来就是分开的两个文件）
 
-  * bone        → outliner 分组（origin=pivot，rotation 原样）
-  * cube        → element（type=cube，from=origin，to=origin+size）
-  * box UV      → 六个面的逐面 UV（Blockbench 标准展开方式，与 TLM 渲染一致）
-  * png 贴图    → 以 data URI 内嵌进 bbmodel（BetterModel 用 Base64 解码）
+UV 尺寸取值顺序：几何声明的 texture_width/height（1.12 格式）> 老格式 texturewidth/height > 贴图实际尺寸。
+**不要**在几何没声明时默认 64——酒狐就是被这个默认值把 UV 缩了一半，贴图整个错位。
 
 用法：
-  python tlm_to_bbmodel.py <TLM.jar> <输出目录> foxmaid hakurei_reimu ...
+  python tlm_to_bbmodel.py <模型.json> <贴图.png> <输出.bbmodel> [--anim A.json ...] [--anims walk,sit]
 
-注意：TLM 美术资源为 CC BY-NC-SA 4.0，仅可用于非商用服，须署名 TartaricAcid 与 TLM 项目，
-并以相同协议共享改编物。转换产物属部署资产，不进代码仓库。
+注意：TLM 美术资源 CC BY-NC-SA 4.0，仅非商用服可用，须署名 TartaricAcid 与 TLM 项目，
+并以相同协议共享改编物；转换产物属部署资产，不进代码仓库。
 """
 from __future__ import annotations
 
@@ -21,22 +21,25 @@ import base64
 import json
 import sys
 import uuid
-import zipfile
 from pathlib import Path
 
-PACK_ROOT = "assets/touhou_little_maid/tlm_custom_pack/touhou_little_maid-1.0.0/assets"
-# 角色模型分散在两处：普通基岩模型在 touhou_little_maid/ 下，geckolib 风格的（如酒狐）在 geckolib/ 下
-PACK_PREFIXES = (f"{PACK_ROOT}/touhou_little_maid", f"{PACK_ROOT}/geckolib")
-FACES = ("north", "east", "south", "west", "up", "down")
+ALL_FACES = ("north", "east", "south", "west", "up", "down")
+# 默认只导常用动作，maid.animation.json 里还有 swim/chair 等 90 多个用不上的
+DEFAULT_ANIMS = ("idle", "walk", "run", "sit", "jump", "attacked", "death")
 
 
 def ns_uuid(name: str) -> str:
-    """稳定 uuid：同一个模型重复转换得到同样的 id，便于 diff。"""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, "catmaid/tlm/" + name))
 
 
-def box_face_uvs(u: float, v: float, w: float, h: float, d: float) -> dict[str, list[float]]:
-    """基岩 box UV → 六面 UV（左闭右开像素坐标）。"""
+def png_size(png: bytes) -> tuple[int, int]:
+    return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+
+
+# ---------- 几何 ----------
+
+def box_face_rects(u: float, v: float, w: float, h: float, d: float) -> dict[str, list[float]]:
+    """box UV 的六面矩形（未处理角点顺序）。"""
     return {
         "north": [u + d, v + d, u + d + w, v + d + h],
         "east": [u, v + d, u + d, v + d + h],
@@ -47,60 +50,67 @@ def box_face_uvs(u: float, v: float, w: float, h: float, d: float) -> dict[str, 
     }
 
 
-def per_face_uvs(uv_obj: dict, size: list[float]) -> dict[str, list[float]]:
-    """cube 自带逐面 uv 时的分支（少数模型这么写）。"""
+def face_entry(rect: list[float], face: str) -> dict:
+    """Blockbench 的角点顺序：四个侧面正向，up/down 两个角点反序（否则上下两面贴图翻转）。"""
+    x1, y1, x2, y2 = rect
+    if face in ("up", "down"):
+        x1, y1, x2, y2 = x2, y2, x1, y1
+    return {"uv": [x1, y1, x2, y2], "texture": 0}
+
+
+def per_face_rects(uv_obj: dict, size: list[float]) -> dict[str, list[float]]:
     out: dict[str, list[float]] = {}
-    for face in FACES:
+    for face in ALL_FACES:
         entry = uv_obj.get(face)
         if not entry:
             continue
-        fu, fv = entry.get("uv", [0, 0])[:2]
+        u, v = entry.get("uv", [0, 0])[:2]
         fw, fh = entry.get("uv_size", [size[0], size[1]])[:2]
-        out[face] = [fu, fv, fu + fw, fv + fh]
+        out[face] = [u, v, u + fw, v + fh]  # fh 为负数时自然形成反向矩形（镜像面）
     return out
 
 
-def convert_cube(cube: dict, bone_pivot: list[float], idx: int) -> dict:
-    origin = list(cube.get("origin", [0, 0, 0]))
-    size = list(cube.get("size", [1, 1, 1]))
-    to = [origin[i] + size[i] for i in range(3)]
+def convert_cube(cube: dict, bone_pivot: list[float]) -> dict:
+    origin = [float(x) for x in cube.get("origin", [0, 0, 0])]
+    size = [float(x) for x in cube.get("size", [1, 1, 1])]
     uv = cube.get("uv", [0, 0])
 
     if isinstance(uv, dict):
-        face_uvs = per_face_uvs(uv, size)
+        rects = per_face_rects(uv, size)
     else:
-        face_uvs = box_face_uvs(uv[0], uv[1], size[0], size[1], size[2])
+        rects = box_face_rects(uv[0], uv[1], size[0], size[1], size[2])
 
-    faces = {}
-    for face in FACES:
-        coords = face_uvs.get(face)
-        if coords is None:
-            continue
-        faces[face] = {"uv": coords, "texture": 0}
-
-    pivot = list(cube.get("pivot", bone_pivot))
+    faces = {face: face_entry(rects[face], face) for face in ALL_FACES if face in rects}
     return {
-        "name": "cube" if idx == 0 else f"cube{idx}",
-        "uuid": ns_uuid(f"cube/{id(cube)}/{origin}/{size}"),
+        "name": "cube",
+        "uuid": "",
         "type": "cube",
         "from": origin,
-        "to": to,
-        "origin": pivot,
-        "rotation": list(cube.get("rotation", [0, 0, 0])),
+        "to": [origin[i] + size[i] for i in range(3)],
+        "origin": [float(x) for x in cube.get("pivot", bone_pivot)],
+        "rotation": [float(x) for x in cube.get("rotation", [0, 0, 0])],
         "inflate": float(cube.get("inflate", 0)),
         "faces": faces,
-        # Blockbench 用这两个字段决定 UV 编辑模式，保留 box UV 语义
         "box_uv": not isinstance(uv, dict),
-        "uv_offset": uv if not isinstance(uv, dict) else [0, 0],
+        "uv_offset": list(uv) if not isinstance(uv, dict) else [0, 0],
     }
 
 
-def convert_geometry(geo: dict, name: str, texture_png: bytes, tex_w: int, tex_h: int) -> dict:
+def geometry_of(data: dict) -> tuple[dict, int, int]:
+    """兼容两种写法：1.12 的 minecraft:geometry[0].description，和老的 geometry.model。"""
+    if "minecraft:geometry" in data:
+        geo = data["minecraft:geometry"][0]
+        desc = geo.get("description", {})
+        return geo, int(desc.get("texture_width", 0)), int(desc.get("texture_height", 0))
+    geo = data["geometry.model"]
+    return geo, int(geo.get("texturewidth", 0)), int(geo.get("textureheight", 0))
+
+
+def convert_geometry(geo: dict, name: str, png: bytes, tex_w: int, tex_h: int) -> dict:
     bones = geo.get("bones", [])
     by_name = {bone["name"]: bone for bone in bones}
     children: dict[str, list[str]] = {bone["name"]: [] for bone in bones}
     roots: list[str] = []
-
     for bone in bones:
         parent = bone.get("parent")
         if parent and parent in by_name:
@@ -110,32 +120,30 @@ def convert_geometry(geo: dict, name: str, texture_png: bytes, tex_w: int, tex_h
 
     elements: list[dict] = []
     cubes_of: dict[str, list[str]] = {}
-
     for bone in bones:
-        pivot = list(bone.get("pivot", [0, 0, 0]))
-        cube_ids: list[str] = []
+        pivot = [float(x) for x in bone.get("pivot", [0, 0, 0])]
+        ids: list[str] = []
         for i, cube in enumerate(bone.get("cubes", [])):
-            element = convert_cube(cube, pivot, i)
-            # 同一坐标系里可能撞 uuid，按骨骼名再掺一次
-            element["uuid"] = ns_uuid(f"{name}/{bone['name']}/{i}/{cube.get('origin')}")
+            element = convert_cube(cube, pivot)
+            element["uuid"] = ns_uuid(f"{name}/{bone['name']}/{i}")
+            element["name"] = f"{bone['name']}_{i}"
             elements.append(element)
-            cube_ids.append(element["uuid"])
-        cubes_of[bone["name"]] = cube_ids
+            ids.append(element["uuid"])
+        cubes_of[bone["name"]] = ids
 
     def build_group(bone_name: str) -> dict:
         bone = by_name[bone_name]
         return {
             "name": bone_name,
             "uuid": ns_uuid(f"{name}/group/{bone_name}"),
-            "origin": list(bone.get("pivot", [0, 0, 0])),
-            "rotation": list(bone.get("rotation", [0, 0, 0])),
-            # 关键：BetterModel 的 outliner 反序列化把"字符串"当元素引用、把"对象"当子分组，
-            # 所以 cube 必须是裸 uuid 字符串，不能写成 {"uuid": ...}（会 NPE: children is null）
-            "children": list(cubes_of[bone_name]) + [build_group(child) for child in children[bone_name]],
+            "origin": [float(x) for x in bone.get("pivot", [0, 0, 0])],
+            "rotation": [float(x) for x in bone.get("rotation", [0, 0, 0])],
+            # 元素引用必须是裸 uuid 字符串：BetterModel 的反序列化把字符串当引用、对象当子分组
+            "children": list(cubes_of[bone_name]) + [build_group(c) for c in children[bone_name]],
         }
 
     return {
-        "meta": {"format_version": "4.10", "model_format": "bedrock_entity", "box_uv": True},
+        "meta": {"format_version": "5.0", "model_format": "bedrock", "box_uv": False},
         "name": name,
         "model_identifier": name,
         "variable_placeholders": "",
@@ -147,6 +155,7 @@ def convert_geometry(geo: dict, name: str, texture_png: bytes, tex_w: int, tex_h
             {
                 "name": f"{name}.png",
                 "path": "",
+                "relative_path": f"{name}.png",
                 "folder": "",
                 "namespace": "",
                 "id": "0",
@@ -155,7 +164,7 @@ def convert_geometry(geo: dict, name: str, texture_png: bytes, tex_w: int, tex_h
                 "height": tex_h,
                 "uv_width": tex_w,
                 "uv_height": tex_h,
-                "particle": True,
+                "particle": False,
                 "render_mode": "default",
                 "render_sides": "auto",
                 "frame_time": 1,
@@ -163,56 +172,170 @@ def convert_geometry(geo: dict, name: str, texture_png: bytes, tex_w: int, tex_h
                 "frame_order": "",
                 "frame_interpolate": False,
                 "visible": True,
-                "mode": "bitmap",
-                "saved": False,
+                "internal": True,
+                "saved": True,
                 "uuid": ns_uuid(f"{name}/texture"),
-                "relative_path": "",
-                "source": "data:image/png;base64," + base64.b64encode(texture_png).decode("ascii"),
+                "source": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
             }
         ],
         "animations": [],
     }
 
 
-def load_geometry(raw: bytes) -> dict:
-    data = json.loads(raw)
-    if "geometry.model" in data:
-        return data["geometry.model"]
-    geo = data.get("minecraft:geometry")
-    if isinstance(geo, list) and geo:
-        return geo[0].get("description", {}) | geo[0]
-    raise ValueError("无法识别的几何格式")
+# ---------- 动画 ----------
+
+def anim_value(entry) -> list[float] | None:
+    """geckolib 的关键帧值：要么 [x,y,z]，要么 {pre/post: [...]}。
+
+    有少量关键帧是 molang 表达式（如 "0.4*ysm.head_yaw"），bbmodel 里没法表达，返回 None 跳过，
+    不要因为它们让整段动画转换失败。
+    """
+    def as_vec(value):
+        if not isinstance(value, list) or len(value) < 3:
+            return None
+        try:
+            return [float(x) for x in value[:3]]
+        except (TypeError, ValueError):
+            return None
+
+    if isinstance(entry, list):
+        return as_vec(entry)
+    if isinstance(entry, dict):
+        return as_vec(entry.get("post", entry.get("pre")))
+    return None
+
+
+def anim_easing(entry) -> str:
+    if isinstance(entry, dict) and entry.get("lerp_mode") == "catmullrom":
+        return "catmullrom"
+    return "linear"
+
+
+def bone_uuid(model_name: str, bone: str) -> str:
+    return ns_uuid(f"{model_name}/group/{bone}")
+
+
+def convert_animations(model_name: str, anim_files: list[Path], wanted: tuple[str, ...]) -> list[dict]:
+    """geckolib animations → bbmodel animations。多个文件（maid 通用 + 角色专属）按动画名合并。"""
+    merged: dict[str, dict] = {}
+    for path in anim_files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for anim_name, anim in data.get("animations", {}).items():
+            if wanted and anim_name not in wanted:
+                continue
+            slot = merged.setdefault(anim_name, {
+                "length": 0.0, "loop": anim.get("loop", False), "bones": {},
+            })
+            slot["length"] = max(slot["length"], float(anim.get("animation_length", 0)))
+            for bone, channels in anim.get("bones", {}).items():
+                target = slot["bones"].setdefault(bone, {})
+                for channel, frames in channels.items():
+                    if channel not in ("rotation", "position", "scale"):
+                        continue
+                    # 静态姿势（idle/sit 常见）：直接给 [x,y,z] 而不是 时间→值 的字典，
+                    # 当作 0 秒的单个关键帧处理，否则整个动画会被丢掉
+                    if isinstance(frames, (int, float)):
+                        frames = {"0.0": [frames, frames, frames]}
+                    elif isinstance(frames, list):
+                        frames = {"0.0": frames}
+                    if not isinstance(frames, dict):
+                        continue
+                    target.setdefault(channel, {}).update(frames)
+
+    out: list[dict] = []
+    for anim_name, anim in merged.items():
+        animators: dict[str, dict] = {}
+        for bone, channels in anim["bones"].items():
+            keyframes = []
+            for channel, frames in channels.items():
+                points = []
+                try:
+                    ordered = sorted(frames.items(), key=lambda kv: float(kv[0]))
+                except (TypeError, ValueError):
+                    continue
+                for time_str, value in ordered:
+                    vec = anim_value(value)
+                    if vec is None:
+                        continue
+                    points.append({
+                        "x": vec[0], "y": vec[1], "z": vec[2],
+                        "uuid": ns_uuid(f"{model_name}/{anim_name}/{bone}/{channel}/{time_str}"),
+                        "time": float(time_str),
+                        "color": -1,
+                        "interpolation": anim_easing(value),
+                    })
+                keyframes.append({
+                    "channel": channel,
+                    "data_points": points,
+                    "uuid": ns_uuid(f"{model_name}/{anim_name}/{bone}/{channel}"),
+                    "time": 0,
+                    "color": -1,
+                    "interpolation": "linear",
+                })
+            if keyframes:
+                animators[bone_uuid(model_name, bone)] = {
+                    "name": bone, "type": "bone", "keyframes": keyframes,
+                }
+        if not animators:
+            continue
+        loop = anim["loop"]
+        out.append({
+            "name": anim_name,
+            "uuid": ns_uuid(f"{model_name}/anim/{anim_name}"),
+            "loop": "loop" if loop is True else ("hold" if loop == "hold_on_last_frame" else "once"),
+            "override": False,
+            "length": anim["length"],
+            "snapping": 24,
+            "selected": False,
+            "anim_time_update": "",
+            "blend_weight": "",
+            "start_delay": "",
+            "loop_delay": "",
+            "animators": animators,
+        })
+    return out
 
 
 def main() -> int:
-    if len(sys.argv) < 4:
+    args = sys.argv[1:]
+    anim_paths: list[Path] = []
+    wanted: tuple[str, ...] = DEFAULT_ANIMS
+    rest: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--anim":
+            anim_paths.append(Path(args[i + 1]))
+            i += 2
+        elif args[i] == "--anims":
+            wanted = tuple(x.strip() for x in args[i + 1].split(",") if x.strip())
+            i += 2
+        else:
+            rest.append(args[i])
+            i += 1
+
+    if len(rest) < 3:
         print(__doc__)
         return 2
-    jar_path, out_dir = Path(sys.argv[1]), Path(sys.argv[2])
-    names = sys.argv[3:]
-    out_dir.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(jar_path) as jar:
-        entries = set(jar.namelist())
-        for name in names:
-            model_entry = tex_entry = None
-            for prefix in PACK_PREFIXES:
-                candidate_model = f"{prefix}/models/entity/{name}.json"
-                candidate_tex = f"{prefix}/textures/entity/{name}.png"
-                if candidate_model in entries and candidate_tex in entries:
-                    model_entry, tex_entry = candidate_model, candidate_tex
-                    break
-            if model_entry is None:
-                print(f"[skip] {name}: 找不到模型 json 或贴图 png")
-                continue
-            geo = load_geometry(jar.read(model_entry))
-            png = jar.read(tex_entry)
-            tex_w = int(geo.get("texturewidth", 64))
-            tex_h = int(geo.get("textureheight", 64))
-            bbmodel = convert_geometry(geo, name, png, tex_w, tex_h)
-            target = out_dir / f"{name}.bbmodel"
-            target.write_text(json.dumps(bbmodel, ensure_ascii=False), encoding="utf-8")
-            print(f"[ok] {name}: {len(bbmodel['elements'])} cubes, {tex_w}x{tex_h}, {target.stat().st_size // 1024} KB")
+    model_path, tex_path, out_path = Path(rest[0]), Path(rest[1]), Path(rest[2])
+    model_name = out_path.stem
+    data = json.loads(model_path.read_text(encoding="utf-8"))
+    geo, tex_w, tex_h = geometry_of(data)
+    png = tex_path.read_bytes()
+    png_w, png_h = png_size(png)
+    if tex_w <= 0 or tex_h <= 0:
+        # 几何没声明 UV 尺寸时以贴图实际尺寸为准（宁可这样也不要默认 64）
+        tex_w, tex_h = png_w, png_h
+    if (tex_w, tex_h) != (png_w, png_h):
+        print(f"[warn] {model_name}: 几何声明 {tex_w}x{tex_h} 与贴图 {png_w}x{png_h} 不一致，按几何声明写 UV")
+
+    bbmodel = convert_geometry(geo, model_name, png, tex_w, tex_h)
+    if anim_paths:
+        bbmodel["animations"] = convert_animations(model_name, anim_paths, wanted)
+
+    out_path.write_text(json.dumps(bbmodel, ensure_ascii=False), encoding="utf-8")
+    print(f"[ok] {model_name}: {len(bbmodel['elements'])} cubes, "
+          f"{tex_w}x{tex_h}, {len(bbmodel['animations'])} anims, {out_path.stat().st_size // 1024} KB")
     return 0
 
 

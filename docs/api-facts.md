@@ -602,12 +602,37 @@ TLM 用基岩几何 JSON（bones + cubes + box UV），BetterModel 只吃 `.bbmo
 `model: <模型名>` 即说明 `BetterModel.modelOrNull()` 返回了渲染器、模型已被解析并注册；
 测试服日志无 `Unable to load this model` 告警。
 
-### 14.4 缺口：**没有动画**
+### 14.4 修订（2026-11-10 晚，用户实测反馈后）
 
-TLM 的走路/坐下动画不在基岩几何里——它由 geckolib animation json + 模组代码按骨骼名驱动，
-不是 Bedrock animation 格式，**无法直接转成 bbmodel 的 `animations`**。当前转换产物只有静态几何：
+第一版转换有四个错误，均已修正：
 
-- 模型能正常显示、不影响 Phase 1/2；
-- **Phase 3 的行走动画必须自己补**：要么在 Blockbench 里给 `leg/arm/head` 骨骼做 walk/sit 动画再导出，
-  要么按 api-facts 3.5 用 `tracker.animate("walk")` 驱动（前提是 bbmodel 里存在名为 walk 的动画）。
-  Phase 3 开工前先解决这条，否则女仆移动时会是"平移的雕像"。
+1. **UV 尺寸读错（贴图全乱的主因）**。1.12 格式的尺寸在 `minecraft:geometry[0].description.texture_width/height`，
+   老格式才叫 `geometry.model.texturewidth/height`。第一版只读后者，读不到就**默认 64**，
+   而酒狐贴图是 128×128 —— UV 整体缩了一半，贴图完全错位。
+   现在顺序：`description.texture_width` → `texturewidth` → 贴图实际像素尺寸，**绝不默认 64**。
+   （同类问题还影响了 `izayoi_sakuya`：几何声明 128，第一版按 64 输出。）
+2. **up/down 面的角点顺序**。Blockbench 里这两个面是角点反序写的（`[x2,y2,x1,y1]`），
+   照 `[x1,y1,x2,y2]` 写会让上/下两面贴图镜像翻转。
+3. **动画根本没转**（这是原话"原 mod 动画和模型分开，你为啥不转"的原因）。
+   TLM 的动画在 `geckolib/animation/` 下：`maid.animation.json`（通用骨架 97 个动作）+ 角色专属一份
+   （如 `foxmaid.animation.json`）。现在 `--anim` 参数会合并成 bbmodel 的 `animations`，
+   默认只导 `idle / walk / run / sit / jump / attacked / death` 这 7 个。
+   两个坑：`idle`/`sit` 是**静态姿势**（通道值直接给 `[x,y,z]` 而非"时间→值"字典），
+   少量关键帧是 **molang 表达式**（`"0.4*ysm.head_yaw"`），前者按 0 秒单帧处理、后者跳过。
+4. **资源包不会因为 `/bm reload` 重建**（BetterModel 3.6.0 实测）：`build.zip` 只在**服务端启动时**生成。
+   改了模型必须重启；想强制重建就删掉 `plugins/BetterModel/build.zip` 再启动。
+   生成后照 4.2 的规矩**换文件名 + 改 `resource-pack` 与 `resource-pack-sha1`**。
+
+### 14.5 缺口：**动画需要代码驱动**
+
+
+
+动画已经进 bbmodel 了（见 14.4-3），但**播放要代码驱动**：玩家型 NPC 的 `isWalking` 恒 false（3.5），
+BetterModel 不会自己播 `walk`。Phase 3 必须在导航开始/结束时调
+`BetterModel.registryOrNull(uuid).first().animate("walk")` / `stopAnimation("walk")`，
+坐下时 `animate("sit")`。
+
+bbmodel 里的动画名是 `idle / walk / run / sit / jump / attacked / death`，代码里的动画名要与之一致。
+动画数据本身是 geckolib 的旋转/位移关键帧，坐标与角度未做轴向翻转（BetterModel 不解析 model_format，
+按 bbmodel 原生空间处理），**首次在客户端看时要重点确认四肢摆动方向是否合理**，不合理则改
+`ModelMeta.format_version`（5.0 ↔ 4.x）或对 rotation 取反再验。
