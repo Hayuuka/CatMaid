@@ -4,11 +4,15 @@ general:
   max-per-player: 2
   initial-affection: 10
 
+# 女仆模型：由 tools/tlm_to_bbmodel.py 从车万女仆（TLM）素材转换而来，见 docs/api-facts.md 第 14 节
+# 美术资源为 CC BY-NC-SA 4.0：仅非商用服可用，须署名 TartaricAcid 与车万女仆项目
 models:
-  - reimu
-  - marisa
-  - youmu
-  - remilia
+  - foxmaid
+  - hakurei_reimu
+  - kirisame_marisa
+  - konpaku_youmu
+  - izayoi_sakuya
+  - flandre_scarlet
 
 # 随机名字池，召唤时从中取一个
 names:

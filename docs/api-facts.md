@@ -554,3 +554,60 @@ resource-pack:
 4. **`start.bat` 无自动重启**：CatMaid 的保存依赖 `onDisable`（`saveAll` + `flush`）+ 每 5 分钟全量保存。
    若服务端被强杀，最多丢 5 分钟改动；这已是当前设计下限，不额外加复杂度。
 5. 生产服已有 `Vault`/`LuckPerms`/`MythicMobs`/`NpcPlugin-Paper`，但 CatMaid **不依赖**它们（agent.md 1.4）。
+
+---
+
+## 14. 女仆模型资产（TLM 素材 → BetterModel）
+
+### 14.1 素材来源
+
+车万女仆（Touhou Little Maid）1.5.3 的 jar **自带整套东方角色模型**：
+`assets/touhou_little_maid/tlm_custom_pack/touhou_little_maid-1.0.0/assets/touhou_little_maid/models/entity/*.json`
+（共 292 个，混有床/椅/桌等家具，角色以角色名命名），贴图在同层 `textures/entity/*.png`；
+酒狐等 geckolib 风格模型在 `assets/geckolib/models/entity/`。
+
+获取途径：Modrinth 项目 `touhou-little-maid`（GitHub 在本机不可达，api.github.com 与 raw 均 SSL 000）。
+`https://cdn.modrinth.com/data/R0bDWFAW/versions/g1SKoGQJ/touhoulittlemaid-1.5.3-forge+mc1.20.1.jar`
+
+**许可**：美术资源 CC BY-NC-SA 4.0（代码 MIT）。仅非商用服可用，须署名 TartaricAcid 与车万女仆项目，
+改编物以相同协议共享；因此**转换产物不入本仓库**（本仓库是 MIT），只放 `plugins/BetterModel/models/`。
+
+### 14.2 格式桥接：`tools/tlm_to_bbmodel.py`
+
+TLM 用基岩几何 JSON（bones + cubes + box UV），BetterModel 只吃 `.bbmodel`。转换是纯格式搬运：
+
+| TLM | bbmodel |
+|---|---|
+| `geometry.model.bones[].pivot/rotation` | outliner 分组的 `origin` / `rotation` |
+| `bones[].cubes[]`（origin + size） | `elements[]`（`from` = origin，`to` = origin + size） |
+| cube 的 box UV `[u,v]` | 六个面的逐面 UV（Blockbench 标准展开） |
+| `textures/entity/*.png` | 以 `data:image/png;base64,...` 内嵌进 `textures[0].source` |
+
+三个踩过的坑（都验证过，别再踩）：
+
+1. **outliner 里的元素引用必须是裸 uuid 字符串**。写成 `{"uuid": "..."}` 会让 BetterModel 抛
+   `Cannot invoke "com.google.gson.JsonArray.asList()" because "children" is null`——它的反序列化把
+   "字符串"当元素引用、把"对象"当子分组（`ModelOutliner` 字节码确认）。
+2. **必须给逐面 UV**。`ModelFace` 的 north/east/south/west/up/down 六个字段都要 `ModelUV`（`[x1,y1,x2,y2]`），
+   `box_uv` 只是给 Blockbench 编辑器看的，BetterModel 不替你展开。
+3. **贴图用 data URI 内嵌可行**：`ModelTexture.toBlueprint` 里有 `Base64.getDecoder()`。
+   另外 BetterModel **不解析 `model_format`**（全 jar 无此字符串），坐标按 bbmodel 原生空间处理；
+   TLM 模型是 y 向上、脚在 0，与 bbmodel 一致，**不需要翻转 Y**。
+
+### 14.3 已转换并在 Paper 26.2 build 62 + BetterModel 3.6.0 上验证
+
+`foxmaid`(酒狐) / `hakurei_reimu` / `kirisame_marisa` / `konpaku_youmu` / `izayoi_sakuya` / `flandre_scarlet`
+
+验证方式（无需客户端）：召唤后用 `citizens save` 看 `plugins/Citizens/saves.yml`，出现
+`model: <模型名>` 即说明 `BetterModel.modelOrNull()` 返回了渲染器、模型已被解析并注册；
+测试服日志无 `Unable to load this model` 告警。
+
+### 14.4 缺口：**没有动画**
+
+TLM 的走路/坐下动画不在基岩几何里——它由 geckolib animation json + 模组代码按骨骼名驱动，
+不是 Bedrock animation 格式，**无法直接转成 bbmodel 的 `animations`**。当前转换产物只有静态几何：
+
+- 模型能正常显示、不影响 Phase 1/2；
+- **Phase 3 的行走动画必须自己补**：要么在 Blockbench 里给 `leg/arm/head` 骨骼做 walk/sit 动画再导出，
+  要么按 api-facts 3.5 用 `tracker.animate("walk")` 驱动（前提是 bbmodel 里存在名为 walk 的动画）。
+  Phase 3 开工前先解决这条，否则女仆移动时会是"平移的雕像"。
