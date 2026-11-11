@@ -858,6 +858,8 @@ python tools/rcon.py "stop"
 | 背包存储区 | 「27-35 是第 3 行存储，36-44 是灰玻璃填充」但又说容量可扩到 36 格 | 9..44 四行全部是存储位，容量 27 时 36..44 显示为锁定玻璃 | 蓝图这两句自相矛盾（27 格装不下 36 格物品）。按「逐格替换灰玻璃」的口径，未解锁的行就是填充，容量 27 时视觉与蓝图完全一致，扩到 36 时才变成可用格 |
 | 好感度容量 | Phase 4 才由 `AffectionManager` 提供 | Phase 2 就把阈值放进 `MaidInventory.capacityForAffection` | P2 验收项要求「锁定槽（好感度不足）无法放入物品」，必须有容量概念；放在领域对象里，P4 的 `AffectionManager` 直接复用，避免两处阈值 |
 | 背包界面装备区 | 「装备展示区」 | 可编辑（与装备界面共用 0..5 槽） | 展示区能直接换装更符合直觉，且两处写的是同一批槽位，不产生第二套数据 |
+| 空装备位 | 蓝图未规定 | 空格显示带 PDC 标记的轮廓图标（铁剑/盾/铁甲四件），点它等于点空格，回写时当 null | 纯空格看不出哪格放什么；图标不能真被玩家拿走或存进女仆背包 |
+| 装备可见性 | 0.2 节「不做：装备在模型上可见（明确排除）」 | 模型仍不显示装备，改为**在信息书里列出 6 个装备位** | 模型盖住原版装备层，玩家会误以为没生效；用文字补偿，不触碰模型渲染。技术上 BetterModel 挂手持物的能力理论可行，但需单独立项验证 API |
 
 ### 16.5 messages.yml 升级回填
 
@@ -907,6 +909,8 @@ python tools/rcon.py "stop"
 | `Bukkit.createInventory(InventoryHolder, int, Component)` | 存在，标题直接吃 Adventure `Component` |
 | `InventoryDragEvent#getRawSlots()` | 存在，用于判断拖拽是否碰到锁定槽 |
 | `InventoryCloseEvent#getView().getTopInventory().getHolder()` | 可取到自定义 holder（切换界面时也会触发，`sync` 需幂等） |
+| `MutableComponent` | **adventure 5.1.1 已移除该类**（编译直接报找不到符号）；`Component.text()` 返回 `TextComponent.Builder`，链式 append 后 `build()` 收尾 |
+| `Material#translationKey()` + `Component.translatable(...)` | 服务端拿不到中文材质名，物品名交给客户端按语言渲染；只在物品 lore / 名称里有效 |
 
 ### 16.9 交接边界
 
