@@ -70,6 +70,7 @@ public final class NameTagManager {
         if (!enabled) {
             return;
         }
+        ticker++;
         Set<UUID> live = new HashSet<>();
         for (Maid maid : maids) {
             if (!maid.isAlive()) {
