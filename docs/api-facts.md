@@ -1210,11 +1210,13 @@ P3 的收口状态：代码 6 类全落地，验收 5 项实测通过 + 1 项服
 本轮没有单独区分（两者都注册了，`handleDeath` 用 `maid.isAlive()` 幂等）。
 **不要删掉伤害兜底那一段**，否则可能整条死亡流程不触发。
 
-**(3) 掉在地上的铃铛会被火烧掉。** 第一次死亡测试（雷击引燃火焰）后 2 分钟查询，
-死亡点附近**没有任何 item 实体**——铃铛已被烧毁。现在 `drop()` 会给掉落物
-`setInvulnerable(true)` + `setGlowing(true)`：在岩浆里实测试死亡后铃铛仍在，
-`Invulnerable: 1b`，`Item.components."minecraft:custom_data"` 里
-`PublicBukkitValues: {"catmaid:maid_id": "<uuid>"}` 完好。
+**(3) 掉在地上的铃铛会消失两次，必须同时防两种。** 第一次死亡测试（雷击引燃火焰）后 2 分钟查询，
+死亡点附近**没有任何 item 实体**——铃铛已被烧毁；第二次测试的铃铛则在服务器重启后消失，
+因为原版 item 有 5 分钟 `Age` 上限（`Age: 6000` 即销毁，区块没加载时计时暂停，一加载就补齐）。
+现在 `drop()` 会给掉落物 `setInvulnerable(true)` + `setUnlimitedLifetime(true)` + `setGlowing(true)`：
+实测铃铛在岩浆里存活、重启后仍在原地，`Age: -32768s`（无限存活标记），
+`Item.components."minecraft:custom_data"` 里 `PublicBukkitValues: {"catmaid:maid_id": "<uuid>"}` 完好。
+**主人不在线时这条尤其关键**——铃铛是玩家唯一的复活凭证，丢了就等于永久失去女仆。
 
 **(4) Citizens 的自动 despawn 会打断一切 tick 计时。** 无玩家在线时，`/npc spawn` 后约 1 分钟
 NPC 就被丢弃（再 `spawn` 会回"你生成了…"而不是"已经在另一个位置生成"）。

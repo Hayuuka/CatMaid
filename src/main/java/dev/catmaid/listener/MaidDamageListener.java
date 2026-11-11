@@ -173,10 +173,12 @@ public final class MaidDamageListener implements Listener {
             Bukkit.getLogger().warning("[CatMaid] 铃铛无处掉落（死亡位置为空），女仆数据仍在库里，可用管理员命令恢复");
             return;
         }
-        // 掉在地上的铃铛必须烧不掉、炸不掉：它承载着玩家的整只女仆，
-        // 死在岩浆/火里时铃铛跟着没掉就等于永久丢人（实测雷击引燃的火几秒就把铃铛烧没了）
+        // 掉在地上的铃铛必须烧不掉、炸不掉、也不会到点消失：
+        // 它承载着玩家的整只女仆，死在岩浆/火里时铃铛跟着没掉就等于永久丢人。
+        // 实测：不设 unlimitedLifetime 的话，主人不在线时铃铛 5 分钟就被原版清理掉（api-facts 18.3-3）。
         org.bukkit.entity.Item dropped = loc.getWorld().dropItemNaturally(loc, item);
         dropped.setInvulnerable(true);
+        dropped.setUnlimitedLifetime(true);
         dropped.setGlowing(true);
     }
 
