@@ -1090,6 +1090,15 @@ kr.toxicity.model.api.animation.AnimationIterator$Type
 
 ### 17.8 交接给 P4
 
+- **NPC 死亡后的真实状态（P3 验收时踩到，务必先看）**：玩家型 NPC 被摔死后，Citizens 会把
+  实体移除并把 NPC 置为 `spawned=false`，但 **NPC 注册与 saves.yml 条目都保留，npcId 不变**。
+  此时 `/npc list` 看起来是空的（要按 id 操作），`maid.entity()` 为 null，行为 tick 自然空转。
+  手动救活就是 `/npc despawn <id>` 再 `/npc spawn <id>`，实体重建后 `MaidTrait.onSpawn()` 会照常
+  跑 `applyEquipment()`（日志里能看见），行为立即恢复；复活位置是 NPC 上次的坐标，
+  之后 FollowMode 若发现离主人 > 40 格会自己传回去。
+  → P4 实现死亡时不要假设"死亡事件之后 npc.isSpawned() 还是 true"；实现复活时直接用
+  `npc.spawn(loc)` 即可，蓝图 P4「`npc.despawn()`（保留 Citizens 注册）」的方向是对的，只是
+  Citizens 在你 despawn 之前已经帮你 despawn 过一次。
 - 好感度：`Maid#setAffection` 已是背包容量的唯一同步点（16.7-4），`AffectionManager` 直接调它。
 - 台词：`IdleMode` 的决策点（每 40~60 tick）是"随机待机台词"最自然的挂载处，
   但**必须加每女仆独立冷却**（蓝图要求 3 分钟 5%），不要直接复用决策间隔。
