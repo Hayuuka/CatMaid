@@ -26,15 +26,18 @@
 
 ```
 CatMaid 插件（自研）
- ├─ 领域层   Maid / MaidManager / MaidTrait(Citizens Trait, 每tick驱动)
+ ├─ 领域层   Maid / MaidManager / MaidTrait(Citizens Trait, 纯数据标记) / ModelAnimator(三姿态动画状态机)
  ├─ 行为层   BehaviorManager → Idle/Follow/Combat/Farm/Ranch 五个 BehaviorMode
+ │           （tick 由 CatMaidPlugin 全局调度器每 tick 推行——玩家型 NPC 的 Trait#run()
+ │             永不会被 Citizens 调用 [已实测]，见附录 A）
  ├─ 交互层   GuiManager(主菜单/背包/装备/模式/模型 5个GUI) + 台词/喂食/召唤/复活监听
  ├─ 数据层   Database(SQLite) → maids / maid_items / maid_stats 三表
  └─ 接入层   Citizens API(NPC实体/导航/点击事件) + BetterModel API(模型挂载)
 
 外部依赖（只调用，不修改其内部）：
  Citizens2   → 玩家型NPC、Navigator 寻路、NPCRightClickEvent
- BetterModel → ModelTrait 挂 bbmodel 模型 + 动画（资源包已与 CraftEngine 合并下发）
+ BetterModel → ModelTrait 挂 bbmodel 模型 + 动画（双包分离：模型包走原版 resource-pack 强制下发；
+             动画由服务端逐帧驱动、不进资源包——改 bbmodel/调动画只需重启，不必重发包，见附录 A）
  CraftEngine → 无代码耦合，仅资源包层面共存（Phase 0 验证）
 ```
 
@@ -266,7 +269,9 @@ slot 6..(5+capacity) = 存储位，capacity 默认 27，好感度可扩至 36（
 > **状态：已完成（2026-11-11 收口）**。实现与蓝图有出入的地方、以及交接要点，
 > 见 `docs/api-facts.md` 第 15 节（代码地图 / 数据模型 / 运行期不变量 / Phase 2 提醒）。
 > 与本节的差异：Gradle 用 9.9.0 + `--release 25`（非 toolchain）、Citizens 关传递依赖、
-> BetterModel 走反射不引入编译依赖、`plugin.yml` 用 softdepend（详见第 9 节）。
+> BetterModel 走反射不引入编译依赖、`plugin.yml` 用 softdepend（详见第 9 节）、
+> `MaidTrait` 实为**纯数据标记**——玩家型 NPC 的 `Trait#run()` 永不被 Citizens 调用
+> [已实测]（见下方 MaidTrait 修订与附录 A）。
 
 **目标**：能召唤女仆、女仆随服务器重启恢复。这是所有后续阶段的地基。
 
@@ -316,6 +321,9 @@ for maid in repository.loadAll():
       npc = 重建（同 summon 流程，跳过事件与特效）
   if !npc.isSpawned(): npc.spawn(maid.lastLoc 或 home)
   maid.applyEquipment()                        // 装备位写回实体
+  // [已实测]（冲突 6）装备写回由 MaidManager.attach() 在 trait bind 之后补做——不要只依赖
+  // MaidTrait.onSpawn()：Citizens 恢复 NPC 时 onSpawn() 早于 bind() 触发，此时 maid 仍为
+  // null，onSpawn 里的 applyEquipment() 不生效；运行期重新 spawn 时 maid 已注入，才有效。
   （Citizens 自身持久化 NPC，正常情况下 npc 已存在，恢复流程是兜底）
 ```
 
@@ -323,11 +331,16 @@ for maid in repository.loadAll():
 
 ```java
 public final class MaidTrait extends Trait {
-    private Maid maid;                 // onAttach 后由 MaidManager 注入（trait 持久化只存 maidId 字符串）
-    @Override public void run()        // Citizens 每 tick 调用（NPC 已生成时）
-        // 内部 tickCounter++；委托 BehaviorManager.tick(maid, tickCounter)
-        // Phase 1 中 BehaviorManager 尚未实现，留 TODO 占位
-    @Override public void onSpawn()   // maid.applyEquipment()
+    // [已实测]（P3 探针跑满 1400 tick 零触发，同期 bind()/onSpawn() 正常、实例一致）：
+    // 玩家型 NPC 的 Trait#run() 永远不会被 Citizens 调用——PlayerUpdateTask 只对带
+    // PacketNPC trait 的 NPC 调 AbstractNPC#update()，而 Trait.run() 与 navigator.run()
+    // 都只在 update() 内执行；真实玩家实体的 NPC 走原版 NMS.playerTicker。
+    // 采用方案：本 trait 退化为纯数据标记，只存 maidId 供 MaidManager 反查。
+    // 对后续影响：P4-P8 的一切周期逻辑（动画/导航/好感计时）一律由插件调度器统一推行，勿挂 trait。
+    private String maidId;             // 持久化唯一字段（saves.yml: traits.catmaid.maid）
+    @Override public void run()        // 保持空实现——勿在此挂任何每 tick 逻辑（不会被调用）
+    @Override public void onSpawn()   // [已实测] 启动恢复时早于 bind()，maid 为 null、装备写回不生效；
+                                       // 装备写回由 attach() 负责（见上方恢复流程注释）
     @Override public void onDespawn() // 保存坐标
 }
 ```
@@ -461,11 +474,14 @@ public final class MaidMenuHolder implements InventoryHolder {
 
 ## Phase 3 — 行为框架：跟随 / 坐下 / 待机
 
-> **状态：代码已完成，服务端行为实测通过（2026-11-11），跟随/动画的客户端项待人工确认**。
+> **状态：已完成并收口（2026-11-11）**。服务端行为实测通过；跟随、坐下/起立、行走与坐下动画、
+> >40 格传送、跨世界跟随（主世界 ↔ 末地双向）均实测通过（动画联调的三条踩坑事实见 api-facts 17.9，
+> 验收明细见 17.10）。**服主决定不验**：10 只真人同屏 TPS；**未单独验证**：疾跑/骑马跟随。
 > 与本节的差异：**行为 tick 不由 `MaidTrait.run()` 驱动**——玩家型 NPC 的 trait 根本不会被
 > Citizens 调用（只对带 `PacketNPC` 的 NPC 调 `AbstractNPC#update()`），改由插件自己的调度器
-> 每 tick 推行一次；`MaidTrait` 退化为数据标记。动画驱动另落在新增的 `maid/ModelAnimator`。
-> 细节见 `docs/api-facts.md` 第 17 节（**接手请直接读 17.2 与 17.4**）。
+> 每 tick 推行一次；`MaidTrait` 退化为数据标记。动画驱动另落在新增的 `maid/ModelAnimator`
+> 三姿态状态机（见下方「坐下机制」修订与附录 A）。
+> 细节见 `docs/api-facts.md` 第 17 节（**接手请直接读 17.2、17.4 与 17.9**）。
 
 **目标**：女仆"活"起来：跟着主人走、太远传送、可坐下、待机时在 home 附近闲逛。行为框架是 Phase 5-7 的地基。
 
@@ -482,6 +498,9 @@ public interface BehaviorMode {
 public final class BehaviorManager {
     private final Map<Mode, BehaviorMode> modes;
     public BehaviorMode get(Mode mode);
+    public void tickAll(Collection<Maid> maids)   // [已实测] 唯一驱动入口：由 CatMaidPlugin 的
+        // runTaskTimer(this, ..., 1L, 1L) 每 tick 调用（trait.run() 驱动已作废，见附录 A）
+        // 内部 tickCounter 自增；同时对全部女仆推导模型姿态（STAND/WALK/SIT，委托 ModelAnimator）
     public void tick(Maid maid, int tick)
         // sitting == true → 一律不移动（清导航目标），仅播放待机行为
         // 否则委托当前 mode.tick
@@ -515,12 +534,24 @@ tick（每 40+随机20 tick）:
   概率 5%：面向最近的玩家看向 2 秒
 ```
 
-### 坐下机制
+### 坐下机制（P3 修订：动画不由坐下开关直接驱动，改由 ModelAnimator 姿态状态机统一推导）
+
 ```
 Maid.sitting 切换时：
-  true  → clearNavigation；BetterModel 播放 sit 动画（若模型含 sit 状态，api-facts 确认调用方式；无则仅静止）
+  true  → clearNavigation（BehaviorManager 对 sitting 一律硬拦截，任何模式不移动）
   false → 恢复
 持久化 sitting 字段，重启恢复
+
+动画侧 [已实测，方案已落码 maid/ModelAnimator]，姿态由 BehaviorManager 每 tick
+按「是否在导航 / 是否 sitting」推导，各 Mode 不碰动画：
+  SIT  = stop(walk) + animate("sit")，每 5000ms 补播
+         ——[已实测] 单次 animate 播完停在最后一帧不自续，必须补播
+  起立 = 回 STAND：stop(walk) + stop(sit) + 再 animate("idle")
+         ——[已实测] stopAnimation("sit") 停得掉动画、停不掉骨骼姿势（tracker 不回
+         bind pose），「点起立还坐着」必须用 idle 归位动画顶掉坐姿，不能只 stop
+  前提 = 模型必须真有 idle/walk/sit 关键帧（部署前置条件，见附录 A「模型缺动画」行）：
+         Tracker.animate(name) 找不到动画不抛异常、只返回 false，缺帧表现为
+         服务端一路"成功"、客户端"卡住不动"
 ```
 
 ### 配置新增
@@ -615,7 +646,12 @@ public final class DialogueManager {
     // 铃铛 = ItemStack(Material.BELL)，displayName="§d{name}的铃铛"
     //   PDC key "catmaid:maid_id" = maid.id
     // 优先塞进主人背包，满则掉落在死亡位置
-    // npc.despawn()（保留 Citizens 注册，npcId 存档）；repository.save
+    // [已实测]（冲突 4）：玩家型 NPC 死亡后 Citizens 已自行 despawn（实体移除、
+    // spawned=false），但 NPC 注册、saves.yml 条目与 npcId 全部保留（此时 /npc list
+    // 看起来是空的）。因此死亡流程不必再调 npc.despawn()；且不要假设本事件里
+    // npc.isSpawned() 仍为 true（maid.entity() 已为 null，行为 tick 自然空转）。
+    // 手动救回 = /npc despawn <id> + /npc spawn <id>（实体重建后装备/行为自动恢复）
+    repository.save
     // 台词 on_death（以聊天消息发送，此时实体已无）
 
 // TalismanListener
@@ -624,6 +660,8 @@ public final class DialogueManager {
     // 校验使用者 == owner（否则提示"铃铛毫无反应"）
     // 消耗 config.death.revive-cost（默认 1 颗钻石，从玩家背包找）
     // npc 重新 spawn 在玩家旁；alive=true；特效+on_revive 台词；扣除铃铛
+    // [已实测] 复活直接 npc.spawn(loc) 即可——死亡时 Citizens 只是把 NPC 置为
+    // despawned（注册与 npcId 都在），spawn 对 despawned 状态的 NPC 直接可用
 ```
 
 ### 魂符召唤（玩家获取渠道）
@@ -659,6 +697,10 @@ death:
 ```
 
 ### 验收清单
+> **验收前置**[已实测]（冲突 5）：无玩家在线时 Citizens 会自动 despawn 女仆（`maid.entity()`
+> 为 null、行为全部空转，极易误判成「tick 没跑」）。服务端自动化验证前必须先 `/npc spawn <id>`；
+> 「跟主人」类观感验收必须由真人客户端完成。
+
 - [ ] 喂食：食物消耗、粒子、好感度+1、台词、60s 冷却内重复无效果
 - [ ] 好感度跨等级：背包锁定槽解锁、升级特效与台词
 - [ ] 杀死女仆 → 无掉落物、主人背包出现铃铛、DB alive=0、重启后不复活
@@ -720,6 +762,8 @@ farm:
 ```
 
 ### 验收清单
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
 - [ ] 种一片成熟小麦 → 女仆逐株收割、补种、种子从背包扣除
 - [ ] 收获得到的物品进入女仆 GUI 背包，重启不丢
 - [ ] 背包已满 → 物品掉落原地
@@ -772,6 +816,8 @@ ranch:
 ```
 
 ### 验收清单
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
 - [ ] 两只成年牛 + 女仆背包有小麦 → 走近、消耗小麦、双红心进入繁殖
 - [ ] 有毛羊被剪 → 羊毛入女仆背包（颜色正确），羊变裸
 - [ ] 空桶 → 牛奶桶转换正确
@@ -843,6 +889,8 @@ combat:
 ```
 
 ### 验收清单
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
 - [ ] 附近刷僵尸 → 女仆主动迎敌、挥剑击杀、播放挥臂
 - [ ] 主手给弓 → 保持距离射箭，箭有伤害归属（可被玩家拾取的箭不回收）
 - [ ] 好感度 60+ 的女仆明显比 0 好感打得痛（+15%）
@@ -885,6 +933,8 @@ combat:
 - 更新检查：不做
 
 ### 最终验收（全链路）
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
 - [ ] 新玩家：领魂符 → 召唤 → 喂食涨好感 → 派去种田/放牧/打怪 → 死亡复活全流程无报错
 - [ ] 服务器重启后所有状态（位置/模式/背包/好感度/坐下/存活）完整恢复
 - [ ] 60 只女仆同服 TPS ≥ 19.5（行为错峰生效）
@@ -897,12 +947,18 @@ combat:
 | 风险 | 预案 |
 |---|---|
 | BetterModel 挂模型 Trait 的确切 API 与预期不符 | Phase 0 已确认实际 API：`kr.toxicity.model.bukkit.compatibility.citizens.trait.ModelTrait#setRenderer(ModelRenderer)` + `BetterModel.modelOrNull(String)`（**没有 setModel**）。代码层仍按附录 A 封装 `ModelApplier.apply(npc, modelId)` 单点隔离 |
-| 玩家型 NPC 移动时模型只平移、四肢不动（无行走动画） | Phase 0 已定位根因：BM 对 `ServerPlayer` 的 `isWalking` 只看移动输入（`xMovement/zMovement`），Citizens 玩家型 NPC 无输入故恒 false。**Phase 3 必须由代码驱动**：导航开始 `tracker.animate("walk")`、结束 `stopAnimation("walk")`（`BetterModel.registryOrNull(uuid).first()`） |
+| 玩家型 NPC 移动时模型只平移、四肢不动（无行走动画） | **事实**[已实测]：根因同 Phase 0 定位（BM 对 `ServerPlayer` 的 `isWalking` 只看移动输入，Citizens 玩家型 NPC 无输入故恒 false），但代码驱动还有三条隐藏前提：①模型必须真有关键帧——`Tracker.animate(name)` 找不到动画**不抛异常、只返回 false**（首批 `foxmaid.bbmodel` 的 `animations` 为空即踩坑；P0 用 `demon_knight` 验证有动画，掩盖了这点）；②单次 `animate` 播完停在最后一帧不自续（表现为"跟几秒有动作，之后变平移"）；③`stopAnimation("sit")` 停得掉动画、停不掉骨骼姿势（tracker 不回 bind pose → "点起立还坐着"）。**采用方案**（已落码 `maid/ModelAnimator` 三姿态状态机 STAND/WALK/SIT）：STAND=`stop(walk)+stop(sit)+animate("idle")` 用归位动画顶掉坐姿；WALK=`stop(sit)+animate("walk")` 每 1050ms 续播（walk 周期 1s、首尾同帧，几乎无缝）；SIT=`stop(walk)+animate("sit")` 每 5000ms 补播。姿态由 `BehaviorManager` 每 tick 按「导航中/坐着」推导，各 Mode 不碰动画。**对后续影响**：P4 受击/死亡、P7 挥剑等动画同理需要「模型有该动画 + 续播 + 归位」三件套 [待验证：各动画周期与归位策略实现时逐一确定]（`Tracker`/`AnimationModifier` API 见 api-facts 17.5） |
 | 玩家型 NPC 的 `Trait#run()` 不会被调用 | Phase 3 已实测确认：Citizens 的 `PlayerUpdateTask` 只对带 `PacketNPC` trait 的 NPC 调 `AbstractNPC#update()`，而 `Trait.run()` 与 `navigator.run()` 都在 `update()` 里；真实玩家实体的 NPC 走原版 `playerTicker`。**行为 tick 改由插件调度器驱动**，`MaidTrait` 退化为数据标记（`docs/api-facts.md` 17.2） |
+| P4–P8 按「trait 每 tick 驱动」的直觉写周期逻辑 | **事实**[已实测]：见上一行——玩家型 NPC 的 `Trait#run()`/`navigator.run()` 永不被调用。**采用方案**：动画、导航、好感计时（P4 的 `FOLLOW_TICK` 等）等一切周期逻辑一律由插件调度器（`BehaviorManager.tickAll`，`CatMaidPlugin` 的 `runTaskTimer(…, 1L, 1L)`）统一推行；Mode/Listener 内的定时需求走 BehaviorManager 的 tick 计数，不挂 trait。**对后续影响**：任何"靠 trait 每 tick 驱动"的设计写法全部作废 |
 | 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
 | 东方模型资产 | TLM 素材 CC BY-NC-SA 4.0：非商用服可移植，须在服务器公告/关于页署名 TartaricAcid 与 TLM 项目并以相同协议共享改编物；或用 Blockbench 自制。模型文件放 `plugins/BetterModel/models/`，属部署资产不进代码仓库 |
 | NPC 被其他插件清理 | MaidManager.restoreNpcs() 每次 onEnable 兜底重建 |
+| 女仆模型缺 `idle`/`walk`/`sit` 动画 → 对应姿态「卡住不动」且服务端零报错 | **部署前置条件**[已实测]：女仆 bbmodel 必须自带 `idle`/`walk`/`sit` 三条动画，缺一条对应姿态的表现就是"卡住不动"（`Tracker.animate` 找不到名字时静默返回 false，服务端一路"成功"）。缺动画用 `tools/bbmodel_anim.py` 按骨骼名注入；注入时手臂必须写 ±13° 的 bind 倾斜，不能写 0。P4 受击/死亡、P7 攻击动画同理——先补资产再写代码 |
+| 误以为改模型/调动画要重新下发资源包 | **事实**[已实测]：BetterModel 动画不在资源包内（`build8.zip` 内 `animation` 匹配数为 0，模型几何也不在包内，只有贴图和骨骼用的物品模型）——动画是服务端逐帧驱动 display 实体算出来的。**采用方案**：改 bbmodel/调动画只需重启服务器让 BM 重读，**不必重打包、不必让客户端重下资源包**；只有贴图/几何变化才需要重建包并换名更新 `resource-pack` 与 `sha1`（更新姿势见 api-facts 4.2） |
+| 死亡后误判 NPC 状态 | **事实**[已实测]：玩家型 NPC 死亡后 Citizens 已自行 despawn（实体移除、`spawned=false`），但 NPC 注册、saves.yml 条目与 npcId 全部保留，`/npc list` 看起来是空的。**采用方案**：死亡流程不必自己 `despawn()`；复活直接 `npc.spawn(loc)`；死亡事件里**不要假设 `npc.isSpawned()` 仍为 true**（详见 Phase 4 死亡流程修订） |
+| 无玩家在线时 NPC 被自动 despawn，误判「tick 没跑」 | **事实**[已实测]：附近无玩家时 Citizens 置女仆 `spawned=false`、`maid.entity()` 为 null，所有行为逻辑空转。**采用方案**：服务端自动化验证前必须先 `/npc spawn <id>`；「跟主人」类观感验收必须由真人客户端完成（P4–P8 验收清单已注明） |
+| `Trait.onSpawn()` 早于 `bind()` 触发 | **事实**[已实测]：Citizens 恢复 NPC 时 `onSpawn()` 触发时 `maid` 仍为 null，`onSpawn` 里的 `maid.applyEquipment()` 不生效。**采用方案**：装备写回由 `MaidManager.attach()` 在 bind 之后补做（Phase 1 恢复流程已注明）；运行期重新 spawn 时 maid 已注入，onSpawn 可正常生效 |
 
 ## 附录 B — 阶段依赖关系
 
