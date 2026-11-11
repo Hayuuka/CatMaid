@@ -154,7 +154,7 @@ public final class IdleMode implements BehaviorMode {
         NPC npc = maid.npc();
         if (npc != null && npc.isSpawned()) {
             // faceLocation 只是一次转头，转过去就会一直保持，正好是「看一会儿」的效果
-            npc.faceLocation(target.getLocation());
+            npc.faceLocation(target.getEyeLocation());
         }
     }
 

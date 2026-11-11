@@ -15,13 +15,13 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 跟随（默认模式）。距离带是三段式：
+ * 跟随（默认模式）。距离带带迟滞：
  * <pre>
- *   &lt; stop-dist         停下面向主人
- *   stop-dist ~ start-dist  缓冲带，什么都不做（防止在阈值上反复起步/刹车）
- *   &gt; start-dist        追
- *   &gt; teleport-dist     直接传送到主人身边
- *   跨世界              等 3 秒再传送（主人穿传送门/上下线切换世界时不要跟着抽风）
+ *   没在追 + 距离 &gt; start-dist  → 开始追，一直追到 stop-dist 才罢休
+ *   在追   + 距离 &lt;= stop-dist  → 停下并面向主人
+ *   其余情况                     → 原地停下、面向主人（不来回起步/刹车）
+ *   &gt; teleport-dist             直接传送到主人身边
+ *   跨世界                       等 3 秒再传送（主人穿传送门/上下线切换世界时不要跟着抽风）
  * </pre>
  *
  * <p>每 5 tick 判断一次，并按 npcId 错峰（{@code tick % 5 == npcId % 5}）。
@@ -33,8 +33,10 @@ public final class FollowMode implements BehaviorMode {
     /** 在追但 8 秒没挪动 0.5 格 → 认定卡住，放弃这轮导航（agent.md 7.2）。 */
     private static final long STUCK_MS = 8000L;
     private static final double STUCK_DISTANCE_SQ = 0.25;
-    /** 主人挪动超过这么多格就重算路径，避免每 5 tick 都打断一次寻路。 */
-    private static final double RETARGET_DISTANCE = 2.0;
+    /** 主人挪动超过这么多格就重算路径，避免每 5 tick 都打断一次寻路（打断会让朝向乱甩）。 */
+    private static final double RETARGET_DISTANCE = 3.0;
+    /** 面向主人的刷新间隔（单位：次判断）。每 5 tick 判断一次，所以要 4 次 ≈ 1 秒。 */
+    private static final int FACE_EVERY_N_CHECKS = 4;
 
     private final FileConfiguration config;
     private final IdleMode idle;
@@ -51,6 +53,9 @@ public final class FollowMode implements BehaviorMode {
         private Location target;
         private Location lastPos;
         private long lastProgressAt;
+        /** 迟滞标记：一旦开始追就别在阈值上反复起停。 */
+        private boolean chasing;
+        private int faceTick;
     }
 
     @Override
@@ -96,16 +101,24 @@ public final class FollowMode implements BehaviorMode {
             moves.remove(maid.getId());
             return;
         }
-        if (distance <= config.getDouble("follow.stop-dist", 2.5)) {
-            Movement.stop(maid);
-            moves.remove(maid.getId());
-            face(maid, ownerLoc);
+
+        MoveState state = moves.computeIfAbsent(maid.getId(), key -> new MoveState());
+        if (distance > config.getDouble("follow.start-dist", 6)) {
+            state.chasing = true;
+        } else if (distance <= config.getDouble("follow.stop-dist", 2.5)) {
+            state.chasing = false;
+        }
+
+        if (state.chasing) {
+            pursue(maid, entity, ownerLoc, state);
             return;
         }
-        if (distance > config.getDouble("follow.start-dist", 6)) {
-            pursue(maid, entity, ownerLoc);
+        // 没在追：站住，并且面向主人（不面向的话看起来就像"她不知道主人在哪"）
+        Movement.stop(maid);
+        state.target = null;
+        if (++state.faceTick % FACE_EVERY_N_CHECKS == 0) {
+            face(maid, owner);
         }
-        // stop-dist ~ start-dist 之间保持现状：已经在追就继续追，已经停下就继续站着
     }
 
     private void followAcrossWorlds(Maid maid, Location ownerLoc) {
@@ -123,8 +136,7 @@ public final class FollowMode implements BehaviorMode {
         Movement.teleport(maid, ownerLoc);
     }
 
-    private void pursue(Maid maid, LivingEntity entity, Location ownerLoc) {
-        MoveState state = moves.computeIfAbsent(maid.getId(), key -> new MoveState());
+    private void pursue(Maid maid, LivingEntity entity, Location ownerLoc, MoveState state) {
         boolean navigating = Movement.isNavigating(maid);
         boolean needRetarget = !navigating
                 || state.target == null
@@ -156,10 +168,11 @@ public final class FollowMode implements BehaviorMode {
         state.lastProgressAt = System.currentTimeMillis();
     }
 
-    private void face(Maid maid, Location target) {
+    private void face(Maid maid, Player owner) {
         NPC npc = maid.npc();
         if (npc != null && npc.isSpawned()) {
-            npc.faceLocation(target);
+            // 用眼睛位置而不是脚底：朝脚底会让她的头明显低下去
+            npc.faceLocation(owner.getEyeLocation());
         }
     }
 

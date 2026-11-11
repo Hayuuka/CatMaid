@@ -32,8 +32,16 @@ public final class ModelAnimator {
     private static final String MODIFIER = "kr.toxicity.model.api.animation.AnimationModifier";
     private static final String ITERATOR_TYPE = "kr.toxicity.model.api.animation.AnimationIterator$Type";
 
+    /**
+     * 续播间隔。实测玩家型 NPC 的 tracker 上单次 animate 播完就停、stopAnimation 也不一定把骨骼
+     * 拉回 bind pose（见 api-facts 17.9），所以持续型姿态要周期性重播一次。
+     * walk 取 1.05 秒：动画本身 1 秒一循环、首尾同帧，重播几乎无缝。
+     */
+    private static final long WALK_REPLAY_MS = 1050L;
+    private static final long SIT_REPLAY_MS = 5000L;
+
     /** 姿态跟着实体走：女仆重生成后实体 UUID 变了，旧状态自动失效，动画会重新播。 */
-    private record State(UUID entityUuid, Pose pose) {
+    private record State(UUID entityUuid, Pose pose, long playedAt) {
     }
 
     private final Logger logger;
@@ -53,7 +61,7 @@ public final class ModelAnimator {
     }
 
     /**
-     * 切换到指定姿态。幂等：姿态没变、或实体还没生成时什么都不做，可以每 tick 调。
+     * 切换到指定姿态。姿态没变、且还没到续播时间就什么都不做，可以每 tick 调。
      */
     public void apply(Maid maid, Pose pose) {
         if (disabled) {
@@ -66,7 +74,9 @@ public final class ModelAnimator {
         }
         UUID entityUuid = entity.getUniqueId();
         State current = states.get(maid.getId());
-        if (current != null && current.pose() == pose && current.entityUuid().equals(entityUuid)) {
+        long now = System.currentTimeMillis();
+        if (current != null && current.pose() == pose && current.entityUuid().equals(entityUuid)
+                && now - current.playedAt() < replayInterval(pose)) {
             return;
         }
         Object tracker = tracker(entity);
@@ -75,8 +85,11 @@ public final class ModelAnimator {
         }
         switch (pose) {
             case STAND -> {
+                // 光 stop 不够：sit 的骨骼姿势会留在模型上（实测站起来还是坐姿），
+                // 必须再播一次 idle 把这些骨头显式拉回 bind pose
                 stop(tracker, "walk");
                 stop(tracker, "sit");
+                play(tracker, "idle");
             }
             case WALK -> {
                 stop(tracker, "sit");
@@ -87,7 +100,16 @@ public final class ModelAnimator {
                 play(tracker, "sit");
             }
         }
-        states.put(maid.getId(), new State(entityUuid, pose));
+        states.put(maid.getId(), new State(entityUuid, pose, now));
+    }
+
+    /** 站姿是单帧动画，重播没有意义；持续型姿态按各自的间隔续播。 */
+    private static long replayInterval(Pose pose) {
+        return switch (pose) {
+            case STAND -> Long.MAX_VALUE;
+            case WALK -> WALK_REPLAY_MS;
+            case SIT -> SIT_REPLAY_MS;
+        };
     }
 
     /** 女仆被移除时清掉记录，避免 states 无限增长。 */
