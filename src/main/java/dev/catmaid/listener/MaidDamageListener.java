@@ -146,6 +146,17 @@ public final class MaidDamageListener implements Listener {
         hurtDialogueAt.remove(maid.getId());
         hurtAffectionAt.remove(maid.getId());
         playDeathEffect(loc);
+        // 原版死亡结算结束后再收一次实体：Citizens 通常自己会 despawn，但它也会把"已生成"状态
+        // 写进存档，重启后又把身体恢复出来（见 MaidManager#despawnDeadNpcs）。这里晚 2 tick 兜底，
+        // 避免在死亡结算过程中动实体。
+        NPC deathNpc = maid.npc();
+        if (deathNpc != null) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (deathNpc.isSpawned()) {
+                    deathNpc.despawn();
+                }
+            }, 2L);
+        }
         // 死亡是低频但关键的事件，日志留着便于事后核对（好感度、位置、铃铛去向）
         plugin.getLogger().info(maid.getName() + " 倒下了（剩余好感度 "
                 + String.format(java.util.Locale.ROOT, "%.1f", maid.getAffection()) + "，位置 " + loc + "）");

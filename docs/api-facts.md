@@ -1227,6 +1227,16 @@ NPC 就被丢弃（再 `spawn` 会回"你生成了…"而不是"已经在另一�
 `Entity uuid already exists: ... can't add EntityHumanNPC` —— 测试里 3 秒内重复 spawn 造成的，
 复活逻辑用 `npc.isSpawned()` 分支（已生成就 teleport）规避，实际不会走到这条。
 
+**(6) 铃铛态女仆的 NPC 会被 Citizens "复活"成幽灵身体，而且还在被 tick。** 实测现象（服主反馈
+"多了一个没名字的女仆"）：死亡女仆的 NPC 存档里带 `spawned` 状态，重启后 Citizens 照样把实体建回来；
+但插件按 `alive=false` 跳过她 → **没有名牌、站着不动、好感度却还在按 FOLLOW_TICK 涨**（0→1.5）。
+**修复三处**：
+1. `BehaviorManager#tick` 开头 `if (!maid.isAlive()) return;`——死人一律不参与行为/计时；
+2. `MaidManager#despawnDeadNpcs` 在启动恢复轮询里把铃铛态女仆的实体 despawn（日志：`已收起铃铛态女仆 X 的残留实体`）；
+3. `MaidDamageListener` 死亡结算后 2 tick 再 despawn 一次，不依赖 Citizens 的自动行为。
+另：删库/删 NPC 会留下孤儿名牌（TextDisplay），它们不在 NameTagManager 的跟踪表里，
+不会被 `removeOrphans` 清掉，需要手工 `/kill @e[type=text_display]`（插件会在下一 tick 重建真女仆的名牌）。
+
 ### 18.4 与蓝图的有意差异
 
 | 位置 | 蓝图 | 实际 | 理由 |

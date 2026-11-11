@@ -81,6 +81,9 @@ public final class MaidManager {
      */
     public boolean restoreNpcs(boolean allowRecreate) {
         boolean pending = false;
+        // 先处理铃铛态：Citizens 会按存档里的"已生成"状态把她们的实体一起恢复出来，
+        // 于是世界里多出一具没有名牌、还会被行为 tick 推动的幽灵身体（实测就是这么来的）。
+        despawnDeadNpcs();
         for (UUID maidId : awaitingNpc) {
             Maid maid = maids.get(maidId);
             if (maid == null || !maid.isAlive()) {
@@ -101,9 +104,27 @@ public final class MaidManager {
         return !pending;
     }
 
+    /**
+     * 把铃铛态女仆残留的实体收掉。死亡时 Citizens 会自己 despawn 一次，但只要存档里带
+     * "spawned" 状态，重启后它又会把实体建回来。这里在每轮恢复里兜一遍，防止世界里留下
+     * 没有名牌的女仆身体（玩家视角就是"多了一个没名字的女仆"）。
+     */
+    private void despawnDeadNpcs() {
+        for (Maid maid : maids.values()) {
+            if (maid.isAlive() || maid.getNpcId() < 0) {
+                continue;
+            }
+            NPC npc = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
+            if (npc == null || !npc.isSpawned()) {
+                continue;
+            }
+            npc.despawn();
+            logger.info("已收起铃铛态女仆 " + maid.getName() + " 的残留实体（NPC " + npc.getId() + "）");
+        }
+    }
+
     /** 先按 id 查；id 对不上（Citizens 存档重排 / NPC 被清理后又重建过）时按 trait 里的 maidId 反查。 */
-    private NPC findNpc(Maid maid) {
-        NPC byId = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
+    private NPC findNpc(Maid maid) {        NPC byId = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
         if (byId != null) {
             return byId;
         }

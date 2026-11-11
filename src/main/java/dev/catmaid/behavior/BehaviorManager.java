@@ -61,6 +61,11 @@ public final class BehaviorManager {
     }
 
     public void tick(Maid maid, int tick) {
+        // 铃铛态的女仆不能参与任何行为/计时：她的 NPC 可能被 Citizens 按存档"已生成"状态恢复出来
+        // （实测重启后会出现一具没有名牌的幽灵身体），放任 tick 会让好感度凭空上涨、还会走动。
+        if (!maid.isAlive()) {
+            return;
+        }
         LivingEntity entity = maid.entity();
         if (entity == null) {
             return;
