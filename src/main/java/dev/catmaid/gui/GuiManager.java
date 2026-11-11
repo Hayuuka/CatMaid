@@ -11,6 +11,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -22,6 +23,7 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,6 +46,24 @@ public final class GuiManager implements Listener {
     };
     private static final Material[] MODE_ICONS = {
             Material.SHIELD, Material.LEAD, Material.IRON_SWORD, Material.IRON_HOE, Material.CARROT_ON_A_STICK
+    };
+
+    /**
+     * 空装备位的"位置提示"标记。
+     *
+     * <p>提示物本身是一件真物品（铁头盔等），玩家不拦截就能拿走、也会被关闭回写塞进女仆背包，
+     * 所以用 PDC 打标：点它等于点空格，回写时当 null 处理。
+     */
+    private static final NamespacedKey HINT_KEY = new NamespacedKey("catmaid", "slot_hint");
+
+    /** 女仆槽位 0..5 的提示材质与文案键，顺序与 MaidInventory 的装备位语义一致。 */
+    private static final Material[] EQUIP_HINT_MATERIALS = {
+            Material.IRON_SWORD, Material.SHIELD, Material.IRON_HELMET,
+            Material.IRON_CHESTPLATE, Material.IRON_LEGGINGS, Material.IRON_BOOTS
+    };
+    private static final String[] EQUIP_HINT_KEYS = {
+            "gui.slot-mainhand", "gui.slot-offhand", "gui.slot-helmet",
+            "gui.slot-chest", "gui.slot-leggings", "gui.slot-boots"
     };
 
     private final MaidManager maidManager;
@@ -86,7 +106,9 @@ public final class GuiManager implements Listener {
         holder.setInventory(inv);
 
         for (int i = 0; i < GuiLayout.BACKPACK_EQUIP_SLOTS; i++) {
-            inv.setItem(GuiLayout.BACKPACK_EQUIP_BASE + i, copy(maid.inventory().get(i)));
+            ItemStack equipped = maid.inventory().get(i);
+            inv.setItem(GuiLayout.BACKPACK_EQUIP_BASE + i,
+                    equipped != null ? equipped.clone() : equipHint(i));
         }
         for (int i = GuiLayout.BACKPACK_EQUIP_FILLER; i < GuiLayout.BACKPACK_STORAGE_BASE; i++) {
             inv.setItem(i, pane(Material.GRAY_STAINED_GLASS_PANE, null, null));
@@ -104,6 +126,7 @@ public final class GuiManager implements Listener {
         for (int i = GuiLayout.BACKPACK_TOOLBAR; i < GuiLayout.BACKPACK_SIZE; i++) {
             inv.setItem(i, pane(Material.BLACK_STAINED_GLASS_PANE, null, null));
         }
+        inv.setItem(GuiLayout.BACKPACK_HELP, helpItem(maid));
         inv.setItem(GuiLayout.BACKPACK_BACK, icon(Material.ARROW, "gui.button-back", Map.of(), null, false));
 
         player.openInventory(inv);
@@ -116,7 +139,8 @@ public final class GuiManager implements Listener {
         holder.setInventory(inv);
 
         for (int i = 0; i < GuiLayout.EQUIPMENT_SLOTS; i++) {
-            inv.setItem(GuiLayout.EQUIPMENT_BASE + i, copy(maid.inventory().get(i)));
+            ItemStack equipped = maid.inventory().get(i);
+            inv.setItem(GuiLayout.EQUIPMENT_BASE + i, equipped != null ? equipped.clone() : equipHint(i));
         }
         inv.setItem(GuiLayout.EQUIPMENT_BACK, icon(Material.ARROW, "gui.button-back", Map.of(), null, false));
 
@@ -221,6 +245,57 @@ public final class GuiManager implements Listener {
         return pane(Material.GRAY_STAINED_GLASS_PANE, "gui.locked-slot", "gui.locked-slot-lore");
     }
 
+    /** 空装备位的提示（铁头盔这类轮廓图标 + 名字），一眼能看出这格放什么。 */
+    private ItemStack equipHint(int index) {
+        ItemStack stack = new ItemStack(EQUIP_HINT_MATERIALS[index]);
+        ItemMeta meta = stack.getItemMeta();
+        meta.displayName(noItalic(Messages.get(EQUIP_HINT_KEYS[index])));
+        meta.lore(Messages.getList("gui.slot-hint-lore").stream().map(GuiManager::noItalic).toList());
+        meta.getPersistentDataContainer().set(HINT_KEY, PersistentDataType.BYTE, (byte) 1);
+        stack.setItemMeta(meta);
+        return stack;
+    }
+
+    private ItemStack helpItem(Maid maid) {
+        ItemStack stack = new ItemStack(Material.OAK_SIGN);
+        ItemMeta meta = stack.getItemMeta();
+        meta.displayName(noItalic(Messages.get("gui.help-item")));
+        meta.lore(Messages.getList("gui.help-lore",
+                        Map.of("capacity", String.valueOf(maid.inventory().storageCapacity())))
+                .stream().map(GuiManager::noItalic).toList());
+        stack.setItemMeta(meta);
+        return stack;
+    }
+
+    private boolean isHint(ItemStack item) {
+        if (item == null) {
+            return false;
+        }
+        ItemMeta meta = item.getItemMeta();
+        return meta != null && meta.getPersistentDataContainer().has(HINT_KEY, PersistentDataType.BYTE);
+    }
+
+    /**
+     * 提示物是件真物品，不拦就会被玩家拿走、也会被关闭回写塞进女仆背包。
+     * 光标上真拿着东西时撤掉提示，让这次点击按"点空格"交给原版；其余情况一律取消。
+     *
+     * @return true 表示后续按正常流程继续处理
+     */
+    private boolean allowHintClick(InventoryClickEvent event, Inventory top, int slot) {
+        if (!isHint(top.getItem(slot))) {
+            return true;
+        }
+        ItemStack cursor = event.getCursor();
+        boolean placing = !event.getClick().isShiftClick()
+                && cursor != null && !cursor.getType().isAir();
+        if (!placing) {
+            event.setCancelled(true);
+            return false;
+        }
+        top.setItem(slot, null);
+        return true;
+    }
+
     private ItemStack pane(Material material, String nameKey, String loreKey) {
         ItemStack stack = new ItemStack(material);
         if (nameKey == null) {
@@ -284,6 +359,9 @@ public final class GuiManager implements Listener {
             return;
         }
         Maid maid = holder.maid();
+        if (!allowHintClick(event, top, slot)) {
+            return;
+        }
         switch (holder.type()) {
             case MAIN -> {
                 event.setCancelled(true);
@@ -439,8 +517,12 @@ public final class GuiManager implements Listener {
         }
         if (holder.type() == MaidMenuHolder.MenuType.EQUIPMENT) {
             int target = equipmentSlotFor(moving);
-            // 装备界面只往空的目标位塞，避免 shift 一下就把身上的甲换掉
-            if (target < 0 || top.getItem(target) != null) {
+            // 装备界面只往空的目标位塞，避免 shift 一下就把身上的甲换掉；提示物算空位
+            if (target < 0) {
+                return;
+            }
+            ItemStack sitting = top.getItem(target);
+            if (sitting != null && !isHint(sitting)) {
                 return;
             }
             top.setItem(target, moving.clone());
@@ -517,9 +599,16 @@ public final class GuiManager implements Listener {
             return;
         }
         for (int rawSlot : event.getRawSlots()) {
-            if (rawSlot < top.getSize() && !editable(holder, rawSlot)) {
+            if (rawSlot >= top.getSize()) {
+                continue;
+            }
+            if (!editable(holder, rawSlot)) {
                 event.setCancelled(true);
                 return;
+            }
+            if (isHint(top.getItem(rawSlot))) {
+                // 拖拽落点是空装备位：先把提示图标撤掉，否则拖过去的物品会跟它挤在一格
+                top.setItem(rawSlot, null);
             }
         }
     }
@@ -538,19 +627,19 @@ public final class GuiManager implements Listener {
         switch (holder.type()) {
             case BACKPACK -> {
                 for (int i = 0; i < GuiLayout.BACKPACK_EQUIP_SLOTS; i++) {
-                    maid.inventory().set(i, copy(top.getItem(GuiLayout.BACKPACK_EQUIP_BASE + i)));
+                    maid.inventory().set(i, copyReal(top.getItem(GuiLayout.BACKPACK_EQUIP_BASE + i)));
                 }
                 // 只回写已解锁的格：锁定格在 GUI 里是玻璃板，写回去会把原本存着的物品抹掉
                 int capacity = maid.inventory().storageCapacity();
                 for (int i = 0; i < capacity; i++) {
                     maid.inventory().set(MaidInventory.EQUIPMENT_SLOTS + i,
-                            copy(top.getItem(GuiLayout.BACKPACK_STORAGE_BASE + i)));
+                            copyReal(top.getItem(GuiLayout.BACKPACK_STORAGE_BASE + i)));
                 }
                 persist(maid);
             }
             case EQUIPMENT -> {
                 for (int i = 0; i < GuiLayout.EQUIPMENT_SLOTS; i++) {
-                    maid.inventory().set(i, copy(top.getItem(GuiLayout.EQUIPMENT_BASE + i)));
+                    maid.inventory().set(i, copyReal(top.getItem(GuiLayout.EQUIPMENT_BASE + i)));
                 }
                 persist(maid);
             }
@@ -603,6 +692,11 @@ public final class GuiManager implements Listener {
 
     private static ItemStack copy(ItemStack item) {
         return item == null ? null : item.clone();
+    }
+
+    /** 回写用：空位的提示图标要当 null，否则铁头盔会被当成真装备存进女仆背包。 */
+    private ItemStack copyReal(ItemStack item) {
+        return item == null || isHint(item) ? null : item.clone();
     }
 
     /** 物品名默认斜体，统一关掉，颜色由 MiniMessage 决定。 */

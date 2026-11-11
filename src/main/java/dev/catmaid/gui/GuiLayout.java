@@ -31,6 +31,7 @@ public final class GuiLayout {
     public static final int BACKPACK_STORAGE_SLOTS = 36;
     /** 45..53 底部工具栏。 */
     public static final int BACKPACK_TOOLBAR = 45;
+    public static final int BACKPACK_HELP = 49;
     public static final int BACKPACK_BACK = 53;
 
     // ---- 装备（27 格）----

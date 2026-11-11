@@ -84,6 +84,23 @@ gui:
   locked-slot-lore:
     - "<gray>提升好感度后开启"
 
+  # 空装备位的位置提示（放进去物品后自动消失）
+  slot-mainhand: "<dark_gray>主手"
+  slot-offhand: "<dark_gray>副手"
+  slot-helmet: "<dark_gray>头盔"
+  slot-chest: "<dark_gray>胸甲"
+  slot-leggings: "<dark_gray>护腿"
+  slot-boots: "<dark_gray>靴子"
+  slot-hint-lore:
+    - "<gray>把物品放到这一格"
+
+  # 背包界面的说明牌
+  help-item: "<yellow>背包说明"
+  help-lore:
+    - "<gray>最上面一行 6 格：<white>主手 / 副手 / 头盔 / 胸甲 / 护腿 / 靴子"
+    - "<gray>下面的格子：<white>随便存东西，共 {capacity} 格"
+    - "<gray>灰色玻璃：<white>好感度不够，还没解锁"
+
   sit-on: "<green>{name} 坐下了。"
   sit-off: "<green>{name} 站起来了。"
   mode-changed: "<green>已把 {name} 的模式换成「{mode}」。"
