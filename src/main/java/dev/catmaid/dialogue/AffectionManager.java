@@ -2,8 +2,8 @@ package dev.catmaid.dialogue;
 
 import dev.catmaid.data.MaidRepository;
 import dev.catmaid.event.MaidAffectionChangeEvent;
+import dev.catmaid.maid.AffectionTable;
 import dev.catmaid.maid.Maid;
-import dev.catmaid.maid.MaidInventory;
 import dev.catmaid.util.Messages;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -19,9 +19,10 @@ import java.util.UUID;
 /**
  * 好感度：数值、等级、背包容量、伤害加成（蓝图 P4）。
  *
- * <p>数值一律来自 config.yml，等级与容量的阈值复用 {@link MaidInventory} —— Phase 2 就把
- * 「好感度 → 容量」放在那里，且 {@link Maid#setAffection(double)} 是容量的唯一同步点，
- * 所以这里改好感度只调 setAffection，绝不再单独调一次 setStorageCapacity（api-facts 16.7-4）。
+ * <p>数值一律来自 config.yml：增减走 {@code affection.gain/loss}，等级阈值 / 背包容量 / 伤害加成
+ * 走 {@code affection.levels}（{@link AffectionTable} 解析），上下界走 {@code affection.min/max}。
+ * 改好感度只调 {@link Maid#setAffection(double)}，它是容量的唯一同步点，
+ * 绝不再单独调一次 setStorageCapacity（api-facts 16.7-4）。
  *
  * <p>三个触发来源的接入点各不相同，但都必须经过 {@link #apply}，否则事件、台词、特效会被绕过：
  * <ul>
@@ -63,36 +64,25 @@ public final class AffectionManager {
         return key == null ? 0 : config.getDouble("affection.loss." + key, 0);
     }
 
-    /** 死亡实际扣的数值：羁绊（等级 4）死亡减半。 */
+    /** 死亡实际扣的数值：从配置的 {@code affection.death-halve-from-level} 档起死亡减半。 */
     public double deathLoss(Maid maid) {
         double base = loss(AffectionReason.DEATH);
-        return level(maid.getAffection()) >= 4 ? base / 2 : base;
+        return level(maid.getAffection()) >= deathHalveFromLevel() ? base / 2 : base;
     }
 
-    /** 0..4，对应 0.7 的陌生人/熟识/伙伴/挚爱/羁绊。 */
+    /** 0 起，档数与阈值都来自 config（{@link AffectionTable}）。 */
     public int level(double affection) {
-        return MaidInventory.levelForAffection(affection);
+        return AffectionTable.level(affection);
     }
 
-    /** 蓝图的 {@code backpackCapacity(int level)}：27 / 30 / 33 / 36。 */
+    /** 该等级的存储格数（config 的 {@code affection.levels[].capacity}）。 */
     public int backpackCapacity(int level) {
-        return switch (level) {
-            case 0 -> MaidInventory.MIN_STORAGE;
-            case 1 -> 30;
-            case 2 -> 33;
-            default -> MaidInventory.MAX_STORAGE;
-        };
+        return AffectionTable.capacity(level);
     }
 
-    /** 攻击伤害加成，Phase 7 战斗模式使用。 */
+    /** 攻击伤害加成，Phase 7 战斗模式使用（config 的 {@code affection.levels[].damage-bonus}）。 */
     public double damageBonus(int level) {
-        return switch (level) {
-            case 1 -> 0.05;
-            case 2 -> 0.10;
-            case 3 -> 0.15;
-            case 4 -> 0.20;
-            default -> 0;
-        };
+        return AffectionTable.damageBonus(level);
     }
 
     /**
@@ -156,6 +146,17 @@ public final class AffectionManager {
         return Math.max(20, config.getInt("affection.follow-tick-interval-seconds", 300) * 20);
     }
 
+    private int deathHalveFromLevel() {
+        return config.getInt("affection.death-halve-from-level", AffectionTable.levelCount() - 1);
+    }
+
+    /** 好感度上下界来自 config，默认 0..100。 */
+    private double clamp(double value) {
+        double min = config.getDouble("affection.min", 0);
+        double max = config.getDouble("affection.max", 100);
+        return Math.max(min, Math.min(max, value));
+    }
+
     private void onLevelUp(Maid maid, int newLevel) {
         // 升级的"心跳"：爱心爆发 + 台词 + 给主人一条容量提示（背包多出来的格子得让玩家知道）
         Location loc = maid.entity() == null ? null : maid.entity().getLocation();
@@ -170,14 +171,10 @@ public final class AffectionManager {
         if (owner != null) {
             Map<String, String> ph = new HashMap<>();
             ph.put("name", maid.getName());
-            ph.put("level", Messages.plain("gui.level-" + newLevel));
+            ph.put("level", Messages.levelName(newLevel));
             ph.put("capacity", String.valueOf(backpackCapacity(newLevel)));
             Messages.send(owner, "affection-level-up", ph);
         }
-    }
-
-    private static double clamp(double value) {
-        return Math.max(0, Math.min(100, value));
     }
 
     private static String format(double value) {

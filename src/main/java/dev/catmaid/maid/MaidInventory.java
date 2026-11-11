@@ -36,35 +36,14 @@ public final class MaidInventory {
         this.storageCapacity = Math.max(0, Math.min(capacity, MAX_STORAGE));
     }
 
-    /** 好感度 → 存储格数（蓝图 0.7 等级表）。Phase 4 的 AffectionManager 直接复用。 */
+    /** 好感度 → 存储格数（走 config 的 affection.levels，见 {@link AffectionTable}）。 */
     public static int capacityForAffection(double affection) {
-        if (affection >= 60) {
-            return MAX_STORAGE; // 挚爱、羁绊同为 36 格
-        }
-        if (affection >= 40) {
-            return 33;
-        }
-        if (affection >= 20) {
-            return 30;
-        }
-        return MIN_STORAGE;
+        return AffectionTable.capacity(AffectionTable.level(affection));
     }
 
-    /** 好感度 → 等级序号 0..4（陌生人/熟识/伙伴/挚爱/羁绊）。 */
+    /** 好感度 → 等级序号（陌生人/熟识/伙伴/挚爱/羁绊…，档数由配置决定）。 */
     public static int levelForAffection(double affection) {
-        if (affection >= 80) {
-            return 4;
-        }
-        if (affection >= 60) {
-            return 3;
-        }
-        if (affection >= 40) {
-            return 2;
-        }
-        if (affection >= 20) {
-            return 1;
-        }
-        return 0;
+        return AffectionTable.level(affection);
     }
 
     public ItemStack get(int slot) {

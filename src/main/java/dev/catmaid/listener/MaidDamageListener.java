@@ -43,14 +43,7 @@ import java.util.UUID;
  */
 public final class MaidDamageListener implements Listener {
 
-    /** 受伤台词冷却：她不可能每挨一下就喊一句。 */
-    private static final long HURT_DIALOGUE_COOLDOWN_MS = 30_000L;
-    /**
-     * 好感度扣减的冷却。蓝图写的是"受击 -0.5"，但没提多段伤害——火焰每 10 tick 跳一次、
-     * 岩浆同理，不节流会在一分钟内把好感度清零。5 秒是"一次挨打事件"的近似。
-     */
-    private static final long HURT_AFFECTION_COOLDOWN_MS = 5_000L;
-
+    /** 受伤台词与好感扣减的冷却都来自 config（dialogue.hurt-cooldown-seconds / affection.hurt-cooldown-seconds）。 */
     private final Plugin plugin;
     private final MaidManager maidManager;
     private final AffectionManager affection;
@@ -116,15 +109,25 @@ public final class MaidDamageListener implements Listener {
     private void onHurt(Maid maid) {
         long now = System.currentTimeMillis();
         Long lastAffection = hurtAffectionAt.get(maid.getId());
-        if (lastAffection == null || now - lastAffection >= HURT_AFFECTION_COOLDOWN_MS) {
+        if (lastAffection == null || now - lastAffection >= hurtAffectionCooldownMs()) {
             hurtAffectionAt.put(maid.getId(), now);
             affection.apply(maid, -affection.loss(AffectionReason.HURT), AffectionReason.HURT);
         }
         Long lastDialogue = hurtDialogueAt.get(maid.getId());
-        if (lastDialogue == null || now - lastDialogue >= HURT_DIALOGUE_COOLDOWN_MS) {
+        if (lastDialogue == null || now - lastDialogue >= hurtDialogueCooldownMs()) {
             hurtDialogueAt.put(maid.getId(), now);
             dialogue.send(maid, "on_hurt");
         }
+    }
+
+    /** 好感扣减冷却：蓝图没提多段伤害，火焰/岩浆每 10 tick 一跳，不节流会把好感放干（见类注释）。 */
+    private long hurtAffectionCooldownMs() {
+        return Math.max(0, plugin.getConfig().getLong("affection.hurt-cooldown-seconds", 5)) * 1000L;
+    }
+
+    /** 受伤台词冷却。 */
+    private long hurtDialogueCooldownMs() {
+        return Math.max(0, plugin.getConfig().getLong("dialogue.hurt-cooldown-seconds", 30)) * 1000L;
     }
 
     private void handleDeath(Maid maid, Location deathLoc, EntityDamageEvent cause) {
@@ -190,7 +193,7 @@ public final class MaidDamageListener implements Listener {
         org.bukkit.entity.Item dropped = loc.getWorld().dropItemNaturally(loc, item);
         dropped.setInvulnerable(true);
         dropped.setUnlimitedLifetime(true);
-        dropped.setGlowing(true);
+        dropped.setGlowing(plugin.getConfig().getBoolean("death.bell-glowing", true));
     }
 
     private void playDeathEffect(Location loc) {

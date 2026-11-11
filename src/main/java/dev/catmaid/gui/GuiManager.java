@@ -221,7 +221,7 @@ public final class GuiManager implements Listener {
         ph.put("owner", ownerName(maid));
         ph.put("title", maid.getOwnerTitle());
         ph.put("affection", String.format(Locale.ROOT, "%.1f", maid.getAffection()));
-        ph.put("level", Messages.plain("gui.level-" + level));
+        ph.put("level", Messages.levelName(level));
         ph.put("mode", modeName(maid.getMode()));
         ph.put("used", String.valueOf(maid.inventory().usedStorageSlots()));
         ph.put("capacity", String.valueOf(maid.inventory().storageCapacity()));

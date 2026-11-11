@@ -33,9 +33,19 @@ public final class MaidItems {
     private MaidItems() {
     }
 
+    /** 铃铛用的材质，config 的 {@code death.bell-material}（默认原版 BELL）。 */
+    public static Material bellMaterial(Plugin plugin) {
+        Material material = Material.matchMaterial(
+                plugin.getConfig().getString("death.bell-material", "BELL"));
+        if (material == null || material.isAir() || !material.isItem()) {
+            return Material.BELL;
+        }
+        return material;
+    }
+
     /** 女仆倒下后掉落/入包的铃铛。 */
     public static ItemStack bell(Plugin plugin, Maid maid) {
-        ItemStack item = new ItemStack(Material.BELL);
+        ItemStack item = new ItemStack(bellMaterial(plugin));
         ItemMeta meta = item.getItemMeta();
         Map<String, String> ph = Map.of("name", maid.getName());
         meta.displayName(noItalic(Messages.get("bell-name", ph)));
@@ -50,7 +60,7 @@ public final class MaidItems {
 
     /** 这枚铃铛属于哪只女仆；不是本插件的铃铛返回 null。 */
     public static UUID bellMaidId(Plugin plugin, ItemStack item) {
-        if (item == null || item.getType() != Material.BELL) {
+        if (item == null || item.getType() != bellMaterial(plugin)) {
             return null;
         }
         ItemMeta meta = item.getItemMeta();

@@ -59,26 +59,57 @@ interaction:
     - SWEET_BERRIES
     - GLOW_BERRIES
 
-# 好感度增减（0..100）。等级阈值在代码里（0/20/40/60/80），
-# 每级对应的背包容量是 27/30/33/36/36 格
 affection:
+  # 好感度上下界（喂食/受击/死亡都在这个区间里夹紧）
+  min: 0
+  max: 100
+
+  # 等级表。min = 进入该档所需好感度（第一档必须 0，且必须递增）；
+  # capacity = 该档可用的背包存储格数（最大 36）；damage-bonus = 攻击伤害加成（P7 战斗用）。
+  # 档数可增删：等级名在 messages.yml 的 gui.level-<序号>（0 起），
+  # 超出的档位没有名字时会显示 "Lv.N"，不会把裸 key 打给玩家。
+  levels:
+    - {min: 0,  capacity: 27, damage-bonus: 0.0}
+    - {min: 20, capacity: 30, damage-bonus: 0.05}
+    - {min: 40, capacity: 33, damage-bonus: 0.10}
+    - {min: 60, capacity: 36, damage-bonus: 0.15}
+    - {min: 80, capacity: 36, damage-bonus: 0.20}
+
+  # 从第几档（0 起）开始，死亡扣的好感减半。默认最后一档（羁绊）
+  death-halve-from-level: 4
+  # 受击扣好感的最小间隔。火焰/岩浆每 10 tick 跳一次，不节流会把好感放干
+  hurt-cooldown-seconds: 5
+
+  # 各原因的增减量
   gain:
     feed: 1.0            # 喂一次
     work-harvest: 0.1    # 收割一次（P5）
     work-breed: 0.1      # 繁殖/剪毛/挤奶一次（P6）
     work-kill: 0.2       # 击杀一只敌怪（P7）
-    follow-tick: 0.5     # 跟随时每 5 分钟
+    follow-tick: 0.5     # 跟随时每 follow-tick-interval-seconds 一次
   loss:
-    hurt: 0.5            # 受击（5 秒内多次伤害算一次）
-    death: 20.0          # 死亡（羁绊等级减半）
+    hurt: 0.5            # 受击（hurt-cooldown-seconds 内的多段伤害算一次）
+    death: 20.0          # 死亡
   # 跟随多久加一次 follow-tick（秒）。蓝图要求 5 分钟
   follow-tick-interval-seconds: 300
 
 # 台词
 dialogue:
   channel: chat          # chat | actionbar
+  # 受伤台词冷却（好感扣减的冷却在 affection.hurt-cooldown-seconds）
+  hurt-cooldown-seconds: 30
+  # 随机待机台词：每 check-interval-seconds 掷一次骰子，chance 概率说一句，
+  # 同一只女仆两次之间至少隔 cooldown-seconds
+  idle:
+    check-interval-seconds: 180
+    chance: 0.05
+    cooldown-seconds: 300
 
 # 死亡与复活
 death:
-  # 唤醒铃铛的代价，格式 材质:数量
+  # 唤醒铃铛的代价，格式 材质:数量（数量可省略，默认 1）
   revive-cost: DIAMOND:1
+  # 铃铛用的物品材质（默认原版钟）。改材质前先确认玩家能拿到该物品
+  bell-material: BELL
+  # 铃铛掉在地上时是否发光（穿墙可见），方便回头找
+  bell-glowing: true

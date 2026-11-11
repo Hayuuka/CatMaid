@@ -28,11 +28,6 @@ import java.util.concurrent.ThreadLocalRandom;
 public final class DialogueManager {
 
     private static final String FILE_NAME = "dialogue.yml";
-    /** 每 3 分钟掷一次骰子（蓝图：每 3 分钟 5% 概率）。 */
-    private static final int IDLE_CHECK_TICKS = 20 * 60 * 3;
-    private static final double IDLE_CHANCE = 0.05;
-    /** 低频台词每女仆 5 分钟一条，防止连续触发。 */
-    private static final long IDLE_COOLDOWN_MS = 5 * 60 * 1000L;
 
     private final Plugin plugin;
     private YamlConfiguration dialogue;
@@ -78,17 +73,19 @@ public final class DialogueManager {
     /**
      * 随机待机台词的心跳。由 BehaviorManager 每 tick 调，但只在待机/跟随模式下调。
      * 错峰到 npcId 上，避免所有女仆在同一 tick 一起掷骰子。
+     * 三个参数（掷骰间隔 / 概率 / 每女仆冷却）都来自 config 的 {@code dialogue.idle}。
      */
     public void tickIdle(Maid maid, int tick) {
-        if (Math.floorMod(tick, IDLE_CHECK_TICKS) != Math.floorMod(maid.getNpcId(), IDLE_CHECK_TICKS)) {
+        int interval = idleCheckTicks();
+        if (Math.floorMod(tick, interval) != Math.floorMod(maid.getNpcId(), interval)) {
             return;
         }
-        if (ThreadLocalRandom.current().nextDouble() >= IDLE_CHANCE) {
+        if (ThreadLocalRandom.current().nextDouble() >= idleChance()) {
             return;
         }
         long now = System.currentTimeMillis();
         Long last = idleSpokenAt.get(maid.getId());
-        if (last != null && now - last < IDLE_COOLDOWN_MS) {
+        if (last != null && now - last < idleCooldownMs()) {
             return;
         }
         idleSpokenAt.put(maid.getId(), now);
@@ -97,6 +94,18 @@ public final class DialogueManager {
 
     public void forget(UUID maidId) {
         idleSpokenAt.remove(maidId);
+    }
+
+    private int idleCheckTicks() {
+        return Math.max(20, plugin.getConfig().getInt("dialogue.idle.check-interval-seconds", 180) * 20);
+    }
+
+    private double idleChance() {
+        return plugin.getConfig().getDouble("dialogue.idle.chance", 0.05);
+    }
+
+    private long idleCooldownMs() {
+        return Math.max(0, plugin.getConfig().getLong("dialogue.idle.cooldown-seconds", 300)) * 1000L;
     }
 
     private void deliver(Maid maid, String raw, Map<String, String> extra) {

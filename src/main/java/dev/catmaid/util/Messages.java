@@ -98,6 +98,18 @@ public final class Messages {
         return MINI.stripTags(raw);
     }
 
+    /**
+     * 等级显示名（messages.yml 的 {@code gui.level-<序号>}）。
+     *
+     * <p>等级档数现在由 config 的 {@code affection.levels} 决定，服主可以加到 6 档以上；
+     * 缺对应名字时回落成 "Lv.N"，而不是把裸 key 打给玩家（Phase 1 踩过这个坑）。
+     */
+    public static String levelName(int level) {
+        String key = "gui.level-" + level;
+        String raw = config == null ? key : config.getString(key, key);
+        return raw.equals(key) ? "Lv." + (level + 1) : MINI.stripTags(raw);
+    }
+
     public static List<Component> getList(String key) {
         return getList(key, Map.of());
     }

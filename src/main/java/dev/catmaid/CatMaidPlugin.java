@@ -11,6 +11,7 @@ import dev.catmaid.listener.MaidDamageListener;
 import dev.catmaid.listener.MaidInteractListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.listener.TalismanListener;
+import dev.catmaid.maid.AffectionTable;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelAnimator;
@@ -60,6 +61,8 @@ public final class CatMaidPlugin extends JavaPlugin {
         instance = this;
         saveDefaultConfig();
         Messages.load(this);
+        // 等级表必须在任何女仆载入之前灌好：Maid.setAffection 要用它换算背包容量
+        AffectionTable.load(getConfig(), getLogger());
 
         // 依赖自检放在 enable 里做（plugin.yml 用 softdepend），这样缺依赖时能打印中文原因并自禁用，
         // 而不是被 Paper 以英文报错拒绝加载。

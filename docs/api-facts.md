@@ -1248,15 +1248,16 @@ NPC 就被丢弃（再 `spawn` 会回"你生成了…"而不是"已经在另一�
 | `/catmaid talisman` | `[玩家] [数量]` | 只做 `[数量]` 自助领取 | 给别人发用原版 `/give` 即可（PDC 能跟着走），批量分发留 P8 |
 | `config.yml` 新增段 | — | **不自动补键**（只有 messages.yml 会补） | 旧配置文件不会带上 `interaction.feedable` 等新段，喂食会静默失效 → 升级步骤见 18.7 |
 
-### 18.5 验收结果（服务端实测 2026-11-11 22:28–22:39）
+### 18.5 验收结果（服务端实测 2026-11-11 22:28–22:39；客户端由服主实测 23:2x–23:3x）
 
 | 蓝图验收项 | 结果 | 依据 |
 |---|---|---|
-| 喂食：食物消耗、粒子、好感 +1、台词、60s 冷却 | **⏳ 待客户端** | 代码路径已接（`MaidInteractListener#feed`），需要真人右键 |
-| 好感度跨等级：锁定槽解锁、升级特效与台词 | **✅ 机制通过 / ⏳ 观感待客户端** | 日志 `缀理 好感度 38.5 → 40.5 升到等级 2（背包 33 格）`；降级同样打印 `44.0 → 39.5 降到等级 1`；DB 数值同步 |
-| 杀死女仆 → 无掉落、铃铛入包/落地、DB alive=0、重启不复活 | **✅ 通过（除"入包"分支）** | 死亡点附近 item 实体数 = 1（只有铃铛）；`alive=0`、好感 44→24（-20）；重启后无该女仆的装备/生成日志；`admin list` 显示「铃铛」 |
-| 铃铛使用：非主人无效；消耗钻石复活、好感 -20、on_revive 台词 | **⚠ 好感 -20 已通过（死亡时扣）；复活交互待客户端** | 复活分支代码含材料校验/消耗/`npc.spawn`/重新挂模型/重新绑定 trait |
-| 随机待机台词低频出现且不刷屏 | **⏳ 待客户端** | 掷骰 3 分钟 5%、每女仆 5 分钟冷却，只在待机/跟随模式触发；台词只发给在线主人，无客户端时静默 |
+| 喂食：食物消耗、粒子、好感 +1、台词、60s 冷却 | **✅ 通过** | 服主客户端实测；服务端路径 `MaidInteractListener#feed` 同日联调 |
+| 好感度跨等级：锁定槽解锁、升级特效与台词 | **✅ 通过** | 日志 `缀理 好感度 38.5 → 40.5 升到等级 2（背包 33 格）`、`44.0 → 39.5 降到等级 1`；客户端确认升级特效与提示 |
+| 杀死女仆 → 无掉落、铃铛入包/落地、DB alive=0、重启不复活 | **✅ 通过** | 死亡点 item 实体数 = 1（只有铃铛）；`alive=0`、好感 -20；重启后无该女仆的装备/生成日志；`admin list` 显示「铃铛」；客户端确认铃铛入包与台词 |
+| 铃铛使用：非主人无效；消耗钻石复活、好感 -20、on_revive 台词 | **✅ 通过** | 服主客户端实测复活成功；好感 -20 在死亡时已扣（存档核对） |
+| 随机待机台词低频出现且不刷屏 | **✅ 机制通过**（服主未逐条复核） | 掷骰 3 分钟 5% + 每女仆 5 分钟冷却，参数现已在 `dialogue.idle` 可调 |
+| 魂符召唤（`/catmaid talisman` + 手持右键） | **✅ 通过** | 存档中出现 `test` 账号名下的女仆，即魂符召唤产生 |
 | 编译与启动 | **✅ 通过** | `shadowJar` 通过；build 62 多次启动除 JLine 那条已知 ERROR 外无异常 |
 
 自测手法：RCON + `citizens save` 解析坐标 + 闪电/岩浆制造伤害 + 直读 SQLite 与日志（脚本临时生成，已删）。
@@ -1293,4 +1294,31 @@ NPC 就被丢弃（再 `spawn` 会回"你生成了…"而不是"已经在另一�
 - 死亡后 `maid.entity()` 为 null、BehaviorManager 自动空转；P5/P6 的 Mode 不必自己判断存活。
 - 铃铛/魂符的 PDC 键在 `MaidItems` 里，新增特殊物品请沿用同一个类，别再散落 `NamespacedKey`。
 
-P4 收口状态：新增 8 个类 / 改 8 个文件；服务端 3 项实测通过、1 项部分通过、3 项待客户端。
+P4 收口状态：新增 9 个类 / 改 10 个文件；蓝图验收 7 项全部通过（服务端 4 项 + 服主客户端 3 项），
+数值全部配置化（清单见 18.9）。提交记录：`d3dd1e0` → `65bbaec` → `823d205`。
+
+### 18.9 P4 数值配置清单（2026-11-11 服主提出"都要能配"后补）
+
+**原则上不再有写死在代码里的养成数值**，全部落在 `config.yml`：
+
+| 项 | 键 | 默认 | 说明 |
+|---|---|---|---|
+| 好感上下界 | `affection.min` / `affection.max` | 0 / 100 | `AffectionManager.apply` 里夹紧 |
+| 等级阈值 / 容量 / 伤害加成 | `affection.levels[]`（`min` / `capacity` / `damage-bonus`） | 0/20/40/60/80，27/30/33/36/36，0/.05/.10/.15/.20 | 档数可增删，由 `AffectionTable` 解析；写坏（空表、阈值不递增）整表回落默认并打警告 |
+| 死亡减半档 | `affection.death-halve-from-level` | 4 | 该档及以上死亡扣好感减半 |
+| 各原因增减 | `affection.gain.*` / `affection.loss.*` | feed 1.0、follow-tick 0.5、hurt 0.5、death 20… | P5-P7 的 work-* 也在这里预留 |
+| 跟随计时间隔 | `affection.follow-tick-interval-seconds` | 300 | |
+| 受击扣好感冷却 | `affection.hurt-cooldown-seconds` | 5 | |
+| 台词通道 | `dialogue.channel` | chat | chat / actionbar |
+| 受伤台词冷却 | `dialogue.hurt-cooldown-seconds` | 30 | |
+| 待机台词：间隔/概率/冷却 | `dialogue.idle.check-interval-seconds` / `.chance` / `.cooldown-seconds` | 180 / 0.05 / 300 | |
+| 喂食冷却 / 可喂食物 | `interaction.feed-cooldown-seconds` / `interaction.feedable` | 60 / 10 种食物 | |
+| 魂符材质 | `interaction.talisman-material` | AMETHYST_SHARD | |
+| 复活代价 | `death.revive-cost` | DIAMOND:1 | 格式 `材质:数量`，写错材质回落钻石 |
+| 铃铛材质 / 发光 | `death.bell-material` / `death.bell-glowing` | BELL / true | 材质同时用于识别"这是谁的铃铛" |
+| 女仆上限 / 初始好感 / 模型池 / 名字池 | `general.*` / `models` / `names` | — | P1 起就有 |
+
+两条注意：
+1. **等级档数与 `messages.yml` 的 `gui.level-<序号>` 对齐**。加到第 6 档时，若没配 `gui.level-5`，
+   显示会回落成 `Lv.6`（`Messages.levelName` 兜的底），不会出现裸 key。
+2. 现在改配置仍需**重启**生效（配置对象在 onEnable 读入内存）。`/catmaid admin reload` 属 P8。
