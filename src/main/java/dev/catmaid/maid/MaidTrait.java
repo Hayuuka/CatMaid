@@ -4,10 +4,16 @@ import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.util.DataKey;
 
 /**
- * 挂在 NPC 上的 Citizens Trait，让 NPC 与 Maid 领域对象关联，并作为每 tick 驱动的入口。
+ * 挂在 NPC 上的 Citizens Trait，让 NPC 与 Maid 领域对象关联。
  *
  * <p>trait 名固定 "catmaid"，在 CatMaidPlugin#onEnable 注册；持久化只存 maidId 字符串，
  * 真正的数据在 SQLite（Citizens 的 saves.yml 不该承担业务数据）。
+ *
+ * <p><b>这里不驱动行为</b>。蓝图原计划在 {@code run()} 里委托 BehaviorManager，但实测
+ * 玩家型 NPC 的 {@code run()} 根本不会被调用：Citizens 的 {@code PlayerUpdateTask} 只对带
+ * {@code PacketNPC} trait 的 NPC 调 {@code AbstractNPC#update()}（trait 与导航都在里面跑），
+ * 真实玩家实体的 NPC 走的是原版 {@code NMS.playerTicker}。行为 tick 因此改由 CatMaidPlugin
+ * 自己的调度器驱动，详见 docs/api-facts.md 17.2。
  */
 public final class MaidTrait extends Trait {
 
@@ -15,7 +21,6 @@ public final class MaidTrait extends Trait {
 
     private String maidId;
     private Maid maid;
-    private int tickCounter;
 
     public MaidTrait() {
         super("catmaid");
@@ -33,15 +38,6 @@ public final class MaidTrait extends Trait {
 
     public String maidId() {
         return maidId;
-    }
-
-    @Override
-    public void run() {
-        if (maid == null) {
-            return;
-        }
-        tickCounter++;
-        // TODO(P3): 委托 BehaviorManager.tick(maid, tickCounter)
     }
 
     @Override

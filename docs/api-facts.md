@@ -2,11 +2,13 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-11（Phase 2 收口）
+> 最后更新：2026-11-11（Phase 3 收口）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
-**Phase 2 状态：已完成，蓝图验收清单 7/7 通过客户端实测**（详见第 16 节；**接手请直接读第 16 节**）。
+**Phase 2 状态：已完成，蓝图验收清单 7/7 通过客户端实测**（详见第 16 节）。
+**Phase 3 状态：代码完成，服务端行为实测通过，跟随/动画的客户端项待人工确认**（详见第 17 节；
+**接手请直接读 17.2 与 17.4**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -335,6 +337,7 @@ BetterModel 还给 Citizens 注册了调试命令（需选中 NPC，**玩家可�
 | 2026-11-10 | 初版：Paper 26.2 build 135 + Citizens 2.0.44-b4269 + BetterModel 3.7.0-SNAPSHOT-541 + CraftEngine 26.9.2 打通；模型挂载 API 由 `setModel` 修正为 `ModelTrait#setRenderer(ModelRenderer)`；修正 3 个构建坐标；记录 4 条工程限制。 |
 | 2026-11-10 | **资源包方案改为双包分离**（用户决定）：CE 不再合并 `BetterModel/build.zip`，女仆包改由原版 `server.properties` 强制下发（静态 HTTP + sha1）。客户端实机确认双包并存、`demon_knight` 正常渲染；新增 4.2 资源包更新姿势、4.3 CE 下发未生效的遗留观察、4.4 模型贴图来源与 `fallback_skin.png` 彩虹配色事实。 |
 | 2026-11-10 | **Phase 0 收尾**：新增 3.5「玩家型 NPC 不会自动播放行走动画」——BM 对 `ServerPlayer` 的 `isWalking` 只看 `xMovement/zMovement`（移动输入），Citizens 玩家型 NPC 恒 false；客户端已确认 `/npc animate 2 walk` 可正常播放动画。验收清单四项中三项通过、行走动画一项定性为"需代码驱动（Phase 3）"。CE 自定义物品可见确认通过。 |
+| 2026-11-11 | **Phase 3 收口**：新增第 17 节。核心事实 17.2——玩家型 NPC 的 `Trait#run()` 永远不会被调用（Citizens 只对带 `PacketNPC` 的 NPC 调 `AbstractNPC#update()`），行为 tick 改由插件调度器驱动，蓝图 P3 的委托点作废（含 `[CONFLICT]` 记录）；17.5 新增 `Tracker.animate/stopAnimation` + `AnimationModifier(LOOP)` 的反射用法与「为什么不用 `animate(String)`」；17.6 记录"无玩家在线时 NPC 会被置为 spawned=false"这个把排查带偏的坑。 |
 
 ---
 
@@ -958,3 +961,137 @@ python tools/rcon.py "stop"
   `Maid#setSitting` 目前只改字段，P3 要补上清导航与 sit 动画。
 - **不入库**：`testserver/`、`*.bbmodel`、`model_src/`。
 
+
+---
+
+## 17. Phase 3 交接（行为框架：跟随 / 坐下 / 待机，2026-11-11）
+
+### 17.1 阶段结论
+
+**Phase 3 代码完成，服务端行为已实测跑通**（女仆确实会自己在 home 附近走动、坐下后不再移动、
+行走/坐下动画调用成功）。**跟随主人、动画观感等客户端项待人工实测**（见 17.6）。
+
+本轮新增 6 个类、改 3 个文件，`gradlew shadowJar` 通过，Paper 26.2 build 62 启动无新增 ERROR。
+
+### 17.2 ⚠ 关键事实：玩家型 NPC 的 `Trait#run()` **永远不会被调用**
+
+这是本轮最重要的发现，直接推翻了蓝图 P3 的"MaidTrait.run() 每 tick 委托 BehaviorManager"。
+
+**证据链（全部从 Citizens.jar 字节码确认）**
+
+```
+PlayerUpdateTask.run()
+  └─ if (npc.hasTrait(PacketNPC))   → 排队执行 npc::update   → AbstractNPC.update()
+     else                          → 排队执行 NMS.playerTicker(player)   ← 我们的情况
+AbstractNPC.update()  →  遍历 runnables 调 Trait.run()
+CitizensNPC.update()  →  navigator.run() + updateCounter++   ← 导航也在 update() 里
+```
+
+- 玩家型 NPC（真实 `ServerPlayer`）**没有** `PacketNPC` trait → 走 `NMS.playerTicker`，
+  那是原版玩家 tick，不碰 Citizens 的 trait 与导航。
+- 实测证据：给 `MaidTrait#run()` 加了每 100 次打印一次的探针，跑满 70 秒（≈1400 tick）
+  **一次都没打印**；同一时间 `bind()` 与 `onSpawn()` 都正常触发（trait 实例是同一个，
+  identityHashCode 一致），说明不是实例错位，就是没人调 `run()`。
+- 同一探针下把行为改由插件调度器驱动后，女仆立刻开始移动，导航 `isNavigating()` 从 true 变 false，
+  坐标持续变化——反证导航本身没问题，缺的只是"谁每 tick 推一下"。
+
+**结论 / 采用方案**：行为 tick 由 `CatMaidPlugin` 的 `runTaskTimer(..., 1L, 1L)` 驱动，
+`MaidTrait` 退化为纯数据标记（只存 maidId）。`MaidTrait.run()` 的委托点已删除，
+类注释里写明了原因。
+
+```
+[CONFLICT] 蓝图位置: blueprint.md Phase 3「MaidTrait.run() 内部 tickCounter++；委托 BehaviorManager.tick」
+现实情况:   玩家型 NPC 走原版 playerTicker，Citizens 的 PlayerUpdateTask 只对带 PacketNPC trait 的
+            NPC 调 AbstractNPC#update()，而 Trait.run() 与 navigator.run() 都只在 update() 里执行
+采用方案:   改由插件自己的全局调度器每 tick 推一次（节流/错峰仍在 BehaviorManager 与各 Mode 内）
+            理由: 不引入 PacketNPC（那是"只有协议假实体"模式，会和 BetterModel 的实体渲染打架），
+                  插件自驱最可靠且完全可控
+```
+
+### 17.3 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `behavior/BehaviorMode` | 蓝图定义的接口：`type()` / `tick()` / `onEnable` / `onDisable` |
+| `behavior/BehaviorManager` | 全局守卫（实体空、区块未加载）→ 坐姿硬拦截 → 按模式分发 → 统一驱动模型姿态 |
+| `behavior/Movement` | 移动原语：`navigate`（含 baseSpeed）/ `stop` / `isNavigating` / `teleport` / `arrived` |
+| `behavior/mode/FollowMode` | 三段式距离带、跨世界延迟传送、卡死放弃、主人下线转待机 |
+| `behavior/mode/IdleMode` | 在 home 附近找平地闲逛、5% 概率看向最近的玩家（优先主人） |
+| `maid/ModelAnimator` | 反射驱动 `animate("walk"/"sit")`，按 `Pose` 幂等切换（P0 遗留项 3.5 的落地点） |
+| `CatMaidPlugin` | 新建 BehaviorManager + 行为调度器（`behaviorTask`，onDisable 取消） |
+| `MaidManager` | 构造参数加 `BehaviorManager`；`remove()` 时 `behavior.forget(maid)` |
+| `config.yml` | 新增 `follow.*` 与 `idle.wander-radius` |
+
+### 17.4 行为层设计要点（改 P5-P7 前先看这里）
+
+1. **谁 tick**：`BehaviorManager.tickAll(maidManager.all())`，每 tick 一次，全局 `tickCounter` 自增。
+   错峰用 `Math.floorMod(tick, N) == Math.floorMod(npcId, N)`，分母 N 由各 Mode 自己定（Follow 是 5）。
+2. **动画不写在 Mode 里**：`BehaviorManager` 每 tick 看一眼 `Movement.isNavigating()`，
+   映射成 `Pose.WALK / STAND`；坐着则 `Pose.SIT`。P5-P7 加新模式时**不需要**再管动画。
+3. **坐下是跨模式硬拦截**：`maid.isSitting()` 为真时清导航、套 SIT、只让 IdleMode 做小动作。
+   `Maid#setSitting` 仍然只改字段——下一次 tick（≤50ms）就会生效，所以 GUI 的坐下按钮不用额外接线。
+4. **IdleMode 用 `nextAt` 计数器而不是取模**：它会被 FollowMode 在"主人离线"分支里调用，
+   调用节奏是 5 tick 一次而非每 tick，取模会算不准。间隔 = 40 + (npcId % 20)。
+5. **距离带留缓冲**：`stop-dist(2.5)` 到 `start-dist(6)` 之间**什么都不做**，
+   否则会在阈值上反复起步/刹车。追踪时只有"主人挪了 2 格以上"或"导航已停"才重下目标，避免每 5 tick 打断寻路。
+6. **闲逛落点只取同层或低一格**：早期版本向上找地面，女仆会一层层爬上屋顶（实测 y 从 72 爬到 74），
+   现在只接受 `dy ∈ {0, -1}`，找不到就不动。
+
+### 17.5 动画 API（本轮新增确认，均 [JAR]）
+
+```java
+kr.toxicity.model.api.BetterModel
+  static EntityTrackerRegistry registryOrNull(UUID entityUuid);     // 3.6.0 与 3.7.0 一致
+kr.toxicity.model.api.tracker.EntityTrackerRegistry
+  EntityTracker first();
+kr.toxicity.model.api.tracker.Tracker
+  boolean animate(String animation);                               // 内部用 AnimationModifier.DEFAULT
+  boolean animate(String animation, AnimationModifier modifier);
+  boolean stopAnimation(String animation);
+kr.toxicity.model.api.animation.AnimationModifier
+  static AnimationModifier.Builder builder();                      // builder().type(...).build() 全 public
+kr.toxicity.model.api.animation.AnimationIterator$Type
+  PLAY_ONCE / LOOP / HOLD_ON_LAST
+```
+
+**为什么显式用 LOOP 而不是 `animate(String)`**：`animate(String)` 走 `AnimationModifier.DEFAULT`，
+而 `DEFAULT = builder().build()` 里 `type` 是 null（由下游按模型自身默认解析）。走路动画放一遍就停，
+会以另一种形式重现"走起来四肢不动"这个 P0 遗留问题，所以显式 `builder().type(LOOP).build()`。
+
+`ModelAnimator` 的反射句柄只解析一次（拿到 LOOP modifier 一起缓存），失败一次就整体禁用并只告警一次；
+姿态按 `(maidId → 实体UUID + Pose)` 记录，实体重建后自动重放，避免"重生成后姿态丢失"。
+
+### 17.6 验收结果（服务端实测 2026-11-11 20:47–20:55）
+
+| 蓝图验收项 | 结果 | 依据 |
+|---|---|---|
+| 跟随模式下稳定跟随、>40 格传送 | **⏳ 待客户端实测** | 需要主人真实在线；`FollowMode` 的距离带逻辑无玩家时走不到（见下条） |
+| 主人下线后女仆回家闲逛；上线后重新跟来 | **✅ 通过（下线侧）** | 主人离线时 Follow 转 Idle，坐标 12.63/-1.17 → 18.90/2.91 持续变化；上线补挂沿用 P1 的 `PlayerConnectionListener` |
+| 坐下后任何模式都不移动，解除后恢复 | **✅ 通过（服务端）** | 直接把库里 `sitting` 置 1 重启：坐标稳定不动、导航恒 false、`Pose.SIT` 只应用一次；解除逻辑待客户端点按钮确认 |
+| 10 只女仆同屏 TPS 无明显下降 | **⚠ 部分通过** | 召唤 10 只并全部 spawn 后 `/tps` 三个窗口均 20.0；但没有真实玩家在附近，实体闲置，**真正的同屏压力仍需客户端复测** |
+| 行走/坐下动画真的播出来 | **⏳ 待客户端实测** | 服务端侧已确认链路通：`tracker=ok`、`anim 小铃 WALK/STAND`、`anim 缀理 SIT` 均无异常 |
+| 编译与启动 | **✅ 通过** | `shadowJar` 通过；build 62 启动无新增 ERROR（唯一 ERROR 仍是 JLine 读管道 stdin 那个已知项） |
+
+**测试环境的坑（重要）**：没有玩家在线时 Citizens 会把 NPC 置为 `spawned=false`（实体不存在），
+此时 `maid.entity()` 为 null，行为 tick 全部空转——一开始就是被这个现象误导，以为 tick 没跑。
+驱动测试必须先用 `/npc spawn <id>` 把它们叫出来。
+
+自检方式：临时探针（已删）打印 `tickAll` / `navigate` / `anim` 三类日志；
+坐标采样用 `citizens save` + 解析 `saves.yml`（玩家型 NPC 不在 level 实体索引里，
+`/data get entity` 查不到，见 16.6）。
+
+### 17.7 已知限制 / 遗留
+
+1. **跨世界跟随**用"延迟 3 秒再传送"，没有做"主人穿传送门"的特殊处理；实际体验待客户端确认。
+2. **卡死判定**（8 秒无位移即放弃这轮导航）只在 Follow 里实现；Farm/Ranch 的"拉黑目标 30s"按蓝图属 P5/P6。
+3. **未实现的模式**（COMBAT/FARM/RANCH）当前 fallback 到 FollowMode——不然 P2 的 GUI 切过去就成了木头人。
+   P5-P7 实现后把 fallback 去掉即可。
+4. **`Movement.arrived` 暂时没有调用点**：蓝图 P3 的通用工具列表里有它，留给 P5/P6 用。
+
+### 17.8 交接给 P4
+
+- 好感度：`Maid#setAffection` 已是背包容量的唯一同步点（16.7-4），`AffectionManager` 直接调它。
+- 台词：`IdleMode` 的决策点（每 40~60 tick）是"随机待机台词"最自然的挂载处，
+  但**必须加每女仆独立冷却**（蓝图要求 3 分钟 5%），不要直接复用决策间隔。
+- 死亡/复活：`BehaviorManager.tick` 里已有"实体为 null 直接 return"，铃铛态天然不会报错。
+- 喂食接线（蓝图 P4）：`MaidInteractListener` 里留的 TODO，注意 60s 冷却用内存 Map 即可。

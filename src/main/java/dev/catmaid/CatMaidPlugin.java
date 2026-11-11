@@ -1,5 +1,6 @@
 package dev.catmaid;
 
+import dev.catmaid.behavior.BehaviorManager;
 import dev.catmaid.command.CatMaidCommand;
 import dev.catmaid.data.Database;
 import dev.catmaid.data.MaidRepository;
@@ -8,6 +9,7 @@ import dev.catmaid.listener.MaidInteractListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
+import dev.catmaid.maid.ModelAnimator;
 import dev.catmaid.maid.ModelApplier;
 import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.maid.NameTagManager;
@@ -36,8 +38,10 @@ public final class CatMaidPlugin extends JavaPlugin {
     private ModelRegistry modelRegistry;
     private ModelApplier modelApplier;
     private NameTagManager nameTagManager;
+    private BehaviorManager behaviorManager;
     private BukkitTask saveTask;
     private BukkitTask restoreTask;
+    private BukkitTask behaviorTask;
 
     public static CatMaidPlugin get() {
         return instance;
@@ -75,7 +79,11 @@ public final class CatMaidPlugin extends JavaPlugin {
         repository = new MaidRepository(database, getLogger());
         modelRegistry = new ModelRegistry(getConfig());
         modelApplier = new ModelApplier(getLogger());
-        maidManager = new MaidManager(repository, modelRegistry, modelApplier, getConfig(), getLogger());
+        // 行为层要在 MaidManager 之前建好：它的 tick 由本类的调度器驱动，
+        // 而 MaidManager 在移除女仆时要清掉行为层的 per-maid 状态。
+        behaviorManager = new BehaviorManager(getConfig(), new ModelAnimator(getLogger()));
+        maidManager = new MaidManager(repository, modelRegistry, modelApplier, behaviorManager,
+                getConfig(), getLogger());
 
         maidManager.loadAll();
         // Citizens 异步加载 NPC（启动后数秒才完成），BetterModel 的模型表也在 delayed init 之后才可用。
@@ -105,6 +113,13 @@ public final class CatMaidPlugin extends JavaPlugin {
         saveTask = getServer().getScheduler().runTaskTimer(this, () -> maidManager.saveAll(),
                 20L * 300, 20L * 300);
 
+        // 行为 tick。为什么不用 Citizens 的 Trait#run：玩家型 NPC 走的是原版 playerTicker，
+        // Citizens 的 PlayerUpdateTask 只对带 PacketNPC trait 的 NPC 调 AbstractNPC#update()，
+        // 因此 trait 的 run() 实测永不触发（docs/api-facts.md 17.2）。由插件自己驱动最可靠。
+        // 节流与错峰在 BehaviorManager 与各 Mode 内完成，这里只管每 tick 推一次。
+        behaviorTask = getServer().getScheduler().runTaskTimer(this,
+                () -> behaviorManager.tickAll(maidManager.all()), 1L, 1L);
+
         getLogger().info("已启用，当前女仆 " + maidManager.all().size() + " 只");
     }
 
@@ -117,6 +132,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         if (restoreTask != null) {
             restoreTask.cancel();
             restoreTask = null;
+        }
+        if (behaviorTask != null) {
+            behaviorTask.cancel();
+            behaviorTask = null;
         }
         if (nameTagManager != null) {
             nameTagManager.shutdown();

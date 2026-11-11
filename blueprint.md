@@ -461,6 +461,12 @@ public final class MaidMenuHolder implements InventoryHolder {
 
 ## Phase 3 — 行为框架：跟随 / 坐下 / 待机
 
+> **状态：代码已完成，服务端行为实测通过（2026-11-11），跟随/动画的客户端项待人工确认**。
+> 与本节的差异：**行为 tick 不由 `MaidTrait.run()` 驱动**——玩家型 NPC 的 trait 根本不会被
+> Citizens 调用（只对带 `PacketNPC` 的 NPC 调 `AbstractNPC#update()`），改由插件自己的调度器
+> 每 tick 推行一次；`MaidTrait` 退化为数据标记。动画驱动另落在新增的 `maid/ModelAnimator`。
+> 细节见 `docs/api-facts.md` 第 17 节（**接手请直接读 17.2 与 17.4**）。
+
 **目标**：女仆"活"起来：跟着主人走、太远传送、可坐下、待机时在 home 附近闲逛。行为框架是 Phase 5-7 的地基。
 
 ### 接口与实现
@@ -892,6 +898,7 @@ combat:
 |---|---|
 | BetterModel 挂模型 Trait 的确切 API 与预期不符 | Phase 0 已确认实际 API：`kr.toxicity.model.bukkit.compatibility.citizens.trait.ModelTrait#setRenderer(ModelRenderer)` + `BetterModel.modelOrNull(String)`（**没有 setModel**）。代码层仍按附录 A 封装 `ModelApplier.apply(npc, modelId)` 单点隔离 |
 | 玩家型 NPC 移动时模型只平移、四肢不动（无行走动画） | Phase 0 已定位根因：BM 对 `ServerPlayer` 的 `isWalking` 只看移动输入（`xMovement/zMovement`），Citizens 玩家型 NPC 无输入故恒 false。**Phase 3 必须由代码驱动**：导航开始 `tracker.animate("walk")`、结束 `stopAnimation("walk")`（`BetterModel.registryOrNull(uuid).first()`） |
+| 玩家型 NPC 的 `Trait#run()` 不会被调用 | Phase 3 已实测确认：Citizens 的 `PlayerUpdateTask` 只对带 `PacketNPC` trait 的 NPC 调 `AbstractNPC#update()`，而 `Trait.run()` 与 `navigator.run()` 都在 `update()` 里；真实玩家实体的 NPC 走原版 `playerTicker`。**行为 tick 改由插件调度器驱动**，`MaidTrait` 退化为数据标记（`docs/api-facts.md` 17.2） |
 | 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
 | 东方模型资产 | TLM 素材 CC BY-NC-SA 4.0：非商用服可移植，须在服务器公告/关于页署名 TartaricAcid 与 TLM 项目并以相同协议共享改编物；或用 Blockbench 自制。模型文件放 `plugins/BetterModel/models/`，属部署资产不进代码仓库 |

@@ -25,3 +25,15 @@ nametag:
   enabled: true
   scale: 0.8        # 文字缩放，太大挡视线、太小小字看不清
   height: 0.35      # 相对头顶（实体高度之上）的额外抬升
+
+# 跟随模式。距离带：< stop-dist 停下面向主人；stop-dist~start-dist 保持现状；
+# > start-dist 开追；> teleport-dist 直接传送到身后。
+follow:
+  start-dist: 6
+  stop-dist: 2.5
+  teleport-dist: 40
+  speed: 1.15       # Citizens baseSpeed，1.0 约等于玩家步行，1.15 才跟得上走路的玩家
+
+# 待机模式：在 home 周围闲逛
+idle:
+  wander-radius: 5

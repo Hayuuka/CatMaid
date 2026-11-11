@@ -1,5 +1,6 @@
 package dev.catmaid.maid;
 
+import dev.catmaid.behavior.BehaviorManager;
 import dev.catmaid.data.MaidRepository;
 import dev.catmaid.event.MaidSummonEvent;
 import net.citizensnpcs.api.CitizensAPI;
@@ -35,6 +36,7 @@ public final class MaidManager {
     private final MaidRepository repository;
     private final ModelRegistry models;
     private final ModelApplier modelApplier;
+    private final BehaviorManager behavior;
     private final FileConfiguration config;
     private final Logger logger;
 
@@ -43,10 +45,11 @@ public final class MaidManager {
     private final Set<UUID> awaitingNpc = ConcurrentHashMap.newKeySet();
 
     public MaidManager(MaidRepository repository, ModelRegistry models, ModelApplier modelApplier,
-                       FileConfiguration config, Logger logger) {
+                       BehaviorManager behavior, FileConfiguration config, Logger logger) {
         this.repository = repository;
         this.models = models;
         this.modelApplier = modelApplier;
+        this.behavior = behavior;
         this.config = config;
         this.logger = logger;
     }
@@ -200,6 +203,7 @@ public final class MaidManager {
             npc.despawn();
             npc.destroy();
         }
+        behavior.forget(maid);
         repository.delete(maidId);
         return true;
     }
