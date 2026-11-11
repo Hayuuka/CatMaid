@@ -82,8 +82,13 @@ public final class Maid {
         return affection;
     }
 
+    /**
+     * 好感度是背包容量的唯一来源：改好感度就顺手同步容量，GUI 每次打开按 {@code capacity()} 渲染，
+     * 因此不需要在别处再调一次"扩容/缩容"。Phase 4 的 AffectionManager 走这个 setter 即可。
+     */
     public void setAffection(double affection) {
         this.affection = affection;
+        this.inventory.setStorageCapacity(MaidInventory.capacityForAffection(affection));
     }
 
     public String getOwnerTitle() {
