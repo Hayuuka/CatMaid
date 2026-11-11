@@ -373,6 +373,8 @@ names:             # 随机名字池
 > 交接要点见 `docs/api-facts.md` 第 16 节。与本节的差异：模式界面多了 slot 22 返回键、
 > 好感度容量阈值落在 `MaidInventory`（P4 的 `AffectionManager` 复用）、背包装备区可直接编辑、
 > 空装备位带位置提示、信息书列出当前装备（模型不显示装备的补偿）。
+> **头顶名牌已提前实现**（蓝图原在 P8）：格式 `[主人名] 女仆名`，用 TextDisplay 而非
+> `setNameTagVisible`（模型隐藏原版实体，原版名牌看不见），详见 api-facts 16.9。
 
 **目标**：右键女仆打开主菜单；能存取背包物品、穿脱装备并实时反映到 NPC 实体。
 
@@ -871,7 +873,8 @@ combat:
 
 ### 打磨项
 - `config.yml` 补 `performance` 段：`global-maid-cap: 60`、`behavior-tick-stagger: true`
-- 女仆名牌：`npc.setNameTagVisible` 恒显；名字颜色随好感度等级变化（灰→白→黄→粉→红）
+- 女仆名牌：**方案已在 P2 落地**（TextDisplay 悬浮，见 `docs/api-facts.md` 16.9），
+  本阶段只剩「名字颜色随好感度等级变化（灰→白→黄→粉→红）」——改 `NameTagManager` 的 text 即可
 - Metrics：不接入（无付费服不必要）
 - 更新检查：不做
 

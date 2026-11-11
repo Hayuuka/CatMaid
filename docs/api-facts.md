@@ -815,7 +815,7 @@ python tools/rcon.py "stop"
 ### 16.1 阶段结论
 
 **Phase 2 代码已完成并通过客户端实测**（仅"右键别人的女仆"一项未验，见 16.6）。
-本轮新增 4 个类、改 4 个文件，`gradlew shadowJar` 通过，Paper 26.2 build 62 多次启动无新增 ERROR。
+本轮新增 5 个类、改 5 个文件，`gradlew shadowJar` 通过，Paper 26.2 build 62 多次启动无新增 ERROR。
 
 ### 16.2 新增 / 改动文件
 
@@ -825,6 +825,7 @@ python tools/rcon.py "stop"
 | `gui/MaidMenuHolder` | `InventoryHolder` + `MenuType`，GUI 身份靠 holder 类型判断，不靠标题字符串 |
 | `gui/GuiManager` | 5 个 GUI 的打开、点击分派、拖拽拦截、关闭回写；同时是 `Listener` |
 | `listener/MaidInteractListener` | `NPCRightClickEvent` → 主人校验 → 延迟 1 tick 开主菜单 |
+| `maid/NameTagManager` | 头顶名牌：TextDisplay 的创建 / 跟随 / 失效重建 / 孤儿回收 |
 | `maid/MaidInventory` | 存储容量改为可变（`setStorageCapacity`），新增 `capacityForAffection` / `levelForAffection` / `usedStorageSlots` |
 | `maid/Maid` | `setAffection` 成为容量的唯一同步点 |
 | `util/Messages` | 新增 `getList(key, placeholders)`；新增缺失键自动回填（16.5） |
@@ -881,6 +882,7 @@ python tools/rcon.py "stop"
 | 给女仆穿钻石胸甲 → 实体胸甲槽同步 | **✅ 通过** | 客户端实测放入四件钻石甲 → 查 DB slot 2/3/4/5 各有一条（gzip NBT 解出 `diamond_helmet/chestplate/leggings/boots`）→ 重启后 `applyEquipment` 日志确认实体槽为 `DIAMOND_*` |
 | 锁定槽（好感度不足）无法放入物品 | **✅ 通过** | 客户端实测 + 容量阈值 10 个边界值离线自检 |
 | 模式/模型选择点击生效 | **✅ 通过** | 客户端实测五个界面点击均生效 |
+| 头顶名牌（`[主人] 女仆名`） | **✅ 通过（样式待微调）** | 客户端实测两只女仆均显示；字号/高度是首版默认值 |
 | 编译与启动 | **✅ 通过** | `shadowJar` 通过；build 62 多次启动无新增 ERROR；2 只女仆正常恢复 |
 
 自检方式（临时脚本，跑完已删）：`GuiLayout` 布局映射用纯 Java 断言校验；
@@ -915,10 +917,44 @@ python tools/rcon.py "stop"
 | `MutableComponent` | **adventure 5.1.1 已移除该类**（编译直接报找不到符号）；`Component.text()` 返回 `TextComponent.Builder`，链式 append 后 `build()` 收尾 |
 | `Material#translationKey()` + `Component.translatable(...)` | 服务端拿不到中文材质名，物品名交给客户端按语言渲染；只在物品 lore / 名称里有效 |
 
-### 16.9 交接边界
+### 16.9 头顶名牌（用户要求提前到 P2 实现）
 
-- **已交付**：4 个新类 + 4 个文件改动、5 个 GUI 的完整交互逻辑、`messages.yml` 全部界面文案、
-  空装备位提示与背包说明牌、信息书装备行。
+**归属**：蓝图放在 P8 打磨项（「`npc.setNameTagVisible` 恒显；颜色随好感度等级变化」）。
+用户在 P2 验收时要求提前做，并把格式定为 `[主人名字] 女仆名字`（蓝图没有这个格式）。
+
+```
+[CONFLICT] 蓝图位置: blueprint.md Phase 8 打磨项「女仆名牌：npc.setNameTagVisible 恒显」
+现实情况: BetterModel 接管渲染后会隐藏原版实体（config 的 player-hide-delay），原版名牌随之消失，
+          setNameTagVisible 设成 true 也看不见
+采用方案: 独立 TextDisplay 实体悬浮在头顶 理由: 模型下唯一能让名牌可见的方式，且内容为完整
+          Component，"颜色随好感度"以后只要改 text 就行，不用再换方案
+```
+
+实现要点（`maid/NameTagManager`）：
+
+- 全局**一个**任务，每 tick 只处理 `npcId % 5 == ticker % 5` 的女仆（错峰分母 5），不是每只女仆一个任务
+- 名牌实体 `setPersistent(false)`：不写进世界文件，避免重启留下孤儿名牌；代价是区块卸载后消失，
+  所以 tick 里发现实体失效就重建，这条也是"玩家上线后名牌自动回来"的机制
+- `displays` 表（maidId → 实体 UUID）+ `removeOrphans`，兜住"女仆已被移除但名牌还在"
+- 文字模板在 `messages.yml` 的 `nametag.format`，主人名取 `Bukkit.getOfflinePlayer(...).getName()`，
+  离线/取不到时回落为"主人"
+- 可调参数：`config.yml` 的 `nametag.enabled / scale(0.8) / height(0.35)`
+- 渲染参数：无背景板、有阴影、`see-through` 可穿墙、`Billboard.CENTER` 始终正面朝向玩家、
+  `setTeleportDuration(3)` 让 5 tick 一次的跟随看起来是滑过去的
+
+踩坑：**错峰计数器忘了自增**。`ticker` 恒为 0，条件等价于"只处理 npcId 能被 5 整除的女仆"，
+表现为缀理（npcId 10）有名字、小铃（npcId 12）没有。错峰逻辑本身没问题，错在分母不会走。
+
+**未做**：改名（`/catmaid rename`）仍留在 P8；名牌颜色随好感度等 P4 的 `AffectionManager`。
+当前字号/高度是首版默认值，用户反馈"怪怪的但先这样"，样式待微调。
+
+### 16.10 交接边界
+
+- **已交付**：4 个新类（GuiLayout / MaidMenuHolder / GuiManager / MaidInteractListener）+ 1 个表现层类
+  （NameTagManager）、5 个 GUI 的完整交互逻辑、`messages.yml` 全部界面文案、空装备位提示、
+  背包说明牌、信息书装备行、头顶名牌。
 - **待客户端**：只剩"右键别人的女仆 → 拒绝提示"（需第二个账号）。其余全部实测通过。
+- **下一步**：P3 行为框架（跟随 / 坐下 / 待机）。`MaidTrait.run()` 里留了 `TODO(P3)` 委托点；
+  `Maid#setSitting` 目前只改字段，P3 要补上清导航与 sit 动画。
 - **不入库**：`testserver/`、`*.bbmodel`、`model_src/`。
 
