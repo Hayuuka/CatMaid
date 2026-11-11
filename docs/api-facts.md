@@ -2,10 +2,11 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-11（Phase 1 收口）
+> 最后更新：2026-11-11（Phase 2 收口）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
-**Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节；**接手请直接读第 15 节**）。
+**Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
+**Phase 2 状态：代码完成、服务端验证通过**（5 个 GUI 的交互项待客户端实测，详见第 16 节；**接手请直接读第 16 节**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -806,3 +807,110 @@ python tools/rcon.py "stop"
 - **不入库**：`testserver/`、`*.bbmodel`、`model_src/`（部署资产 + CC BY-NC-SA 美术资源）。
 - **接手第一步**：起测试服 → `catmaid admin list` 应看到两只 `foxmaid` 女仆 → 进服确认外观 →
   开始 Phase 2 的右键与 GUI。
+
+---
+
+## 16. Phase 2 交接（背包 / 装备 / 主菜单 GUI，2026-11-11）
+
+### 16.1 阶段结论
+
+**Phase 2 代码已完成，服务端验证通过；5 个 GUI 的实际交互需要在有客户端的环境下确认**（见 16.6）。
+本轮新增 4 个类、改 3 个文件，`gradlew shadowJar` 通过，Paper 26.2 build 62 连启三次无新增 ERROR。
+
+### 16.2 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `gui/GuiLayout` | 五个 GUI 的全部槽位常量 + 模型分页双向映射（`modelSlot` / `modelIndexAt`）。魔数只在这里出现 |
+| `gui/MaidMenuHolder` | `InventoryHolder` + `MenuType`，GUI 身份靠 holder 类型判断，不靠标题字符串 |
+| `gui/GuiManager` | 5 个 GUI 的打开、点击分派、拖拽拦截、关闭回写；同时是 `Listener` |
+| `listener/MaidInteractListener` | `NPCRightClickEvent` → 主人校验 → 延迟 1 tick 开主菜单 |
+| `maid/MaidInventory` | 存储容量改为可变（`setStorageCapacity`），新增 `capacityForAffection` / `levelForAffection` / `usedStorageSlots` |
+| `maid/Maid` | `setAffection` 成为容量的唯一同步点 |
+| `util/Messages` | 新增 `getList(key, placeholders)`；新增缺失键自动回填（16.5） |
+
+### 16.3 数据流（改 GUI 前必须知道）
+
+**GUI 的 `Inventory` 只是编辑缓冲区**，唯一事实仍是 `MaidInventory`：
+
+```
+打开：MaidInventory --clone--> GUI Inventory
+点击：可编辑槽交给原版处理，锁定槽/按钮位/拖拽一律取消
+关闭：GUI Inventory --全量回读--> MaidInventory → applyEquipment() → saveAsync()
+```
+
+三条由此推出的约束：
+
+1. **在 GUI 之间跳转必须先 `sync`**。`Player#openInventory` 会先触发旧界面的
+   `InventoryCloseEvent` 再开新界面，而新界面是在 close 之前构建的——不手动同步就会显示跳转前的旧数据。
+   `GuiManager` 的返回/翻页分支都已显式 `sync`。
+2. **锁定槽回写时要跳过**。锁定格在 GUI 里是灰玻璃板，若照原样写回会把那一格原本存着的物品覆盖成玻璃板。
+   `sync` 只遍历 `storageCapacity()` 范围内的格子；好感度掉级后超出容量的物品留在数组里不显示，
+   等容量涨回来会重新出现（不丢数据）。
+3. **shift-click 必须自己搬**。原版 shift-click 会往顶部任意空槽塞，包括锁定槽与按钮位。
+   `handleBottomClick` 一律取消并手动放进第一个合法槽；顶部槽 shift-click 则手动塞回玩家背包，放不下的原样留下。
+
+### 16.4 与蓝图的有意差异
+
+| 位置 | 蓝图 | 实际 | 理由 |
+|---|---|---|---|
+| 模式选择 GUI | 只列 10..14 五个模式 | 额外在 slot 22 放「返回主菜单」 | 没有返回键只能按 ESC，和其他四个界面不一致 |
+| 好感度容量 | Phase 4 才由 `AffectionManager` 提供 | Phase 2 就把阈值放进 `MaidInventory.capacityForAffection` | P2 验收项要求「锁定槽（好感度不足）无法放入物品」，必须有容量概念；放在领域对象里，P4 的 `AffectionManager` 直接复用，避免两处阈值 |
+| 背包界面装备区 | 「装备展示区」 | 可编辑（与装备界面共用 0..5 槽） | 展示区能直接换装更符合直觉，且两处写的是同一批槽位，不产生第二套数据 |
+
+### 16.5 messages.yml 升级回填
+
+旧 `messages.yml` 不会自动带上新版本的键，缺键时玩家会看到 `gui.button-back` 这种裸 key
+（P1 踩过 `depend-missing` 的同类问题）。`Messages#mergeMissingKeys` 在 load 时把 jar 内模板里
+「文件没有」的键补进去再存盘，已有值一律不覆盖。
+
+实测：删掉 `gui.main-title` → 重启 → 日志打印「messages.yml 已补齐新版本新增的文案键」且键被补回；
+再重启不会重复打印（幂等）。副作用是 `YamlConfiguration.save` 会重排格式——文件头注释保留，
+值的引号被去掉、段间空行丢失，都不影响语义。
+
+### 16.6 验收结果
+
+| 验收项 | 结果 | 依据 |
+|---|---|---|
+| 右键自己的女仆 → 主菜单；右键别人的 → 拒绝提示 | **⏳ 待客户端实测** | 代码路径已通，但 `NPCRightClickEvent` 对**玩家型 NPC** 是否派发本轮无法验证（无客户端），风险见 16.7-1 |
+| 放入/取出背包物品，重启后仍在 | **⏳ 待客户端实测** | 回写链路与 P1 的 `MaidRepository` 一致，数据落库路径未改 |
+| 给女仆穿钻石胸甲 → 实体胸甲槽同步 | **⏳ 待客户端实测** | 关闭界面时 `applyEquipment()` 写实体装备槽 |
+| 锁定槽（好感度不足）无法放入物品 | **✅ 逻辑自检通过 / ⏳ 交互待实测** | `editable()` 按 `storageCapacity()` 判定；容量阈值 10 个边界值离线自检全通过 |
+| 模式/模型选择点击生效 | **✅ 逻辑自检通过 / ⏳ 交互待实测** | 模型分页 `modelSlot` ↔ `modelIndexAt` 28 格双向一致、无越界无重复（离线自检）；切模型走 `ModelApplier` |
+| 编译与启动 | **✅ 通过** | `shadowJar` 通过；build 62 三次启动无新增 ERROR；2 只女仆正常恢复 |
+
+自检方式（临时脚本，跑完已删）：`GuiLayout` 布局映射用纯 Java 断言校验；
+容量/等级阈值用 `java build/tmp/CapCheck.java` 直接跑（不依赖服务器）。
+
+### 16.7 风险与降级预案
+
+1. **`NPCRightClickEvent` 对玩家型 NPC 可能不派发**（本轮最大不确定项）。
+   Minecraft 客户端右键 Player 实体时仍会发 `ServerboundInteractPacket`，Citizens 又统一转成
+   `NPCRightClickEvent`，所以理论上成立；但 P0/P1 从未实测过「右键玩家型 NPC」。
+   若不触发，降级方案：改监听 `PlayerInteractAtEntityEvent` + `CitizensAPI.getNPCRegistry().isNPC(entity)` 反查，
+   改动只在 `MaidInteractListener` 一个类里。
+2. **AuthMe 未登录玩家的右键未过滤**（13.4-3 遗留）。要过滤必须依赖 AuthMe API，违反 agent.md 1.4，
+   本轮不做；生产服若确实需要，用 AuthMe 的 `AuthMeAsyncPreLoginEvent`/登录状态接口另立小任务。
+3. **两处 GUI 写同一批槽位**：背包界面与装备界面都能改 0..5。单玩家同时只会打开一个界面，
+   不存在并发覆盖；但如果以后做「多人共同编辑同一只女仆」，需要加版本号。
+4. **`setAffection` 是容量唯一同步点**：任何直接改 `affection` 字段的写法都会让容量与好感度错位。
+   Phase 4 的 `AffectionManager` 必须走 setter。
+
+### 16.8 顺手确认的 API（均 [JAR] 已核）
+
+| API | 结论 |
+|---|---|
+| `ClickType.COLLECT_TO_CURSOR` | **不存在**，双击收集在 `InventoryAction.COLLECT_TO_CURSOR`（编译期就报错，已修） |
+| `Material#getEquipmentSlot()` | 存在，返回 `EquipmentSlot`；用来把 shift-click 的护甲送进对应装备位 |
+| `ItemMeta#setEnchantmentGlintOverride(Boolean)` | 存在，比「加隐藏附魔」更干净，用于标记当前模式/当前模型 |
+| `Bukkit.createInventory(InventoryHolder, int, Component)` | 存在，标题直接吃 Adventure `Component` |
+| `InventoryDragEvent#getRawSlots()` | 存在，用于判断拖拽是否碰到锁定槽 |
+| `InventoryCloseEvent#getView().getTopInventory().getHolder()` | 可取到自定义 holder（切换界面时也会触发，`sync` 需幂等） |
+
+### 16.9 交接边界
+
+- **已交付**：4 个新类 + 3 个文件改动、5 个 GUI 的完整交互逻辑、`messages.yml` 全部界面文案。
+- **待客户端**：16.6 的 5 个 ⏳ 项。进服步骤：`catmaid admin summon <玩家> foxmaid` → 右键女仆 →
+  依次点模式/背包/装备/模型 → 放物品关界面 → 重启服务器复查。
+- **不入库**：`testserver/`、`*.bbmodel`、`model_src/`。
+
