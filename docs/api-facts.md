@@ -9,8 +9,8 @@
 **Phase 2 状态：已完成，蓝图验收清单 7/7 通过客户端实测**（详见第 16 节）。
 **Phase 3 状态：已完成并收口**（跟随 / >40 格传送 / 跨世界双向 / 坐下起立 / 动画全部实测通过，
 详见第 17 节；**接手请直接读 17.2、17.4、17.9，P4 开工前必读 17.11**）。
-**Phase 4 状态：代码完成，服务端链路实测通过；喂食/复活/台词三条需客户端**（详见第 18 节，
-接手 P5 前读 18.3 与 18.7）。
+**Phase 4 状态：已完成并收口**（蓝图验收 7/7，服务端 4 项 + 服主客户端 3 项；养成数值全部配置化。
+详见第 18 节，**接手 P5 前读 18.3 / 18.9 / 18.11**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -1322,3 +1322,66 @@ P4 收口状态：新增 9 个类 / 改 10 个文件；蓝图验收 7 项全部�
 1. **等级档数与 `messages.yml` 的 `gui.level-<序号>` 对齐**。加到第 6 档时，若没配 `gui.level-5`，
    显示会回落成 `Lv.6`（`Messages.levelName` 兜的底），不会出现裸 key。
 2. 现在改配置仍需**重启**生效（配置对象在 onEnable 读入内存）。`/catmaid admin reload` 属 P8。
+
+### 18.10 冲突处理记录（agent.md 第 9 节格式）
+
+```
+[CONFLICT] 蓝图位置: Phase 4「死亡 / 复活」+ 附录 A 死亡处理
+现实情况: 玩家型 NPC 是真实 ServerPlayer。实测插件在 EntityDamageEvent 阶段就能判定致死
+          （日志里我们的处理早于原版死亡消息），EntityDeathEvent / PlayerDeathEvent 是否派发未区分
+采用方案: 同时注册 EntityDeathEvent 与 PlayerDeathEvent，并在 EntityDamageEvent 里用
+          `health - finalDamage <= 0` 预判兜底；handleDeath 以 maid.isAlive() 幂等
+理由: 兜底路径实测可用，且不依赖事件派发细节，删掉它可能整条死亡流程不触发
+```
+
+```
+[CONFLICT] 蓝图位置: Phase 4「掉落一个铃铛，满则掉落死亡位置」
+现实情况: 地上铃铛会被死亡现场的火/岩浆烧毁；原版 item 还有 5 分钟 Age 上限，
+          主人不在线时（铃铛必须掉地上）等于 5 分钟后永久失去女仆
+采用方案: 掉落物 setInvulnerable(true) + setUnlimitedLifetime(true) + setGlowing(可配)
+理由: 铃铛是唯一复活凭证，"能被环境销毁"在体验上是不可接受的失败态（agent.md 第 10 节）
+```
+
+```
+[CONFLICT] 蓝图位置: Phase 4「女仆倒下 → alive=false，NPC 保留」
+现实情况: Citizens 会把"已生成"状态写进存档，重启后按它把死亡女仆的实体重新建出来：
+          世界里多出一具没有名牌的身体，而且行为 tick 还在跑 → 好感度凭空上涨（实测 0→1.5）
+采用方案: BehaviorManager#tick 开头拦 !isAlive；MaidManager#despawnDeadNpcs 启动时收起；
+          死亡结算后 2 tick 主动 despawn 一次
+理由: 死亡是业务状态，不能交给 Citizens 的实体生命周期决定；幽灵身体还会误导玩家
+```
+
+```
+[CONFLICT] 蓝图位置: 0.7「Maid#addAffection」/ 0.5「event/MaidModeChangeEvent」
+现实情况: 领域对象不应反向依赖服务层；模式切换目前只有 GUI 一个调用点
+采用方案: 好感度只走 AffectionManager.apply；模式台词接在 GuiManager 切模式处
+理由: 单一入口才不会绕过事件与容量同步；不为单一调用点建事件类（agent.md 3.3），P8 加
+      /catmaid mode 时再抽事件
+```
+
+### 18.11 P5（农业模式）开工清单
+
+**必读**：18.3（死亡兜底、无玩家时 NPC 会被 despawn）、18.9（数值一律进配置的约定）、17.2（tick 由插件调度器驱动）。
+
+1. **落点**：新建 `behavior/mode/FarmMode implements BehaviorMode`，在 `BehaviorManager` 构造里
+   `modes.put(Maid.Mode.FARM, new FarmMode(config))`——`get()` 已有 `mode == null → 跟随` 的降级，
+   接上后不用改别的。
+2. **现成能力（别重复造）**：
+   - 移动：`Movement.navigate/stop/teleport/isNavigating`（`baseSpeed` 倍率，1.1 ≈ 略快于步行）；
+   - 动画：`BehaviorManager` 已在每次 tick 后按 `Movement.isNavigating` 切 WALK/STAND，**Mode 里不要播动画**；
+   - 好感与统计：`affection.apply(maid, affection.gain(AffectionReason.WORK_HARVEST), WORK_HARVEST)` +
+     `maid.stats().addHarvest()`（`MaidStats` 已有字段）；
+   - 台词：`dialogue.send(maid, "on_work_done")`（`dialogue.yml` 里已备好这条）；
+   - 入包：`maid.addItem(stack)` 返回 false 表示放不下 → 调用方掉落到地面；
+   - 工具：`maid.inventory().getMainHand()`，直接传给 `Block#breakNaturally(ItemStack)`（自带耐久与掉落）。
+3. **需要新写的**：`MaidInventory#consumeOne(Material)`（补种扣种子，目前只有 `addItem`/`get`/`set`）；
+   作物成熟判定用 `BlockData instanceof Ageable`（Nether Wart/Cocoa 也是 Ageable）；
+   拉黑表 `Map<BlockPos, Long>` 建议按蓝图放 Mode 实例内，并在 `onDisable` 里清。
+4. **配置**（写进 `config.yml`，不要写死）：`farm.radius` / `farm.center`(home|self) / `farm.replant` / `farm.crops`。
+5. **已知坑**：
+   - 无玩家在线时 Citizens 约 1 分钟就把 NPC 丢掉（18.3-4）。自动化验收要"先 `/npc spawn` 再立刻测"，
+     5 分钟级的周期行为只能调短配置后验证；
+   - 玩家型 NPC 无法用 `/damage`、`@e` 选中（18.3-1），制造场景靠 `/setblock`、`/summon`、`/fill` 打位置；
+   - 每 tick 扫描只在错峰条件满足时做（`tick % 20 == npcId % 20`），且先判区块已加载，否则 TPS 会掉。
+6. **验收前准备**：一片成熟小麦（`/setblock ... wheat[age=7]`）、给女仆一把锄头（GUI 装备页）、
+   清空她的背包；收成后看 GUI 背包与 `catmaid.db` 的 items 表，重启确认不丢。
