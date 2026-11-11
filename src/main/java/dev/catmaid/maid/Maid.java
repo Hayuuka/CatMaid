@@ -2,6 +2,7 @@ package dev.catmaid.maid;
 
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -170,6 +171,19 @@ public final class Maid {
         equipment.setChestplate(inventory.get(3));
         equipment.setLeggings(inventory.get(4));
         equipment.setBoots(inventory.get(5));
+        // 女仆模型会盖住原版装备层，肉眼和命令都查不到实体穿了什么，
+        // 这行日志是核对 Phase 2 "装备同步" 的唯一手段（战斗阶段排查伤害也要用）。
+        Bukkit.getLogger().info("[CatMaid] " + name + " 装备同步"
+                + " 主手=" + slotName(equipment.getItemInMainHand())
+                + " 副手=" + slotName(equipment.getItemInOffHand())
+                + " 头盔=" + slotName(equipment.getHelmet())
+                + " 胸甲=" + slotName(equipment.getChestplate())
+                + " 护腿=" + slotName(equipment.getLeggings())
+                + " 靴子=" + slotName(equipment.getBoots()));
+    }
+
+    private static String slotName(ItemStack item) {
+        return item == null || item.getType().isAir() ? "空" : item.getType().name();
     }
 
     /** 入虚拟背包；放不下时返回 false（调用方决定掉落到地面）。 */
