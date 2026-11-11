@@ -16,6 +16,10 @@ remove-success: "<yellow>已送走女仆 {name}。"
 maid-not-found: "<red>找不到这个女仆：{name}"
 not-your-maid: "<red>她不是你的女仆哦。"
 
+# 头顶名牌（TextDisplay）。{owner}=主人游戏名（取不到时回落为"主人"） {name}=女仆名
+nametag:
+  format: "<gray>[<white>{owner}</white>]</gray> <light_purple>{name}</light_purple>"
+
 list-header: "<light_purple>女仆列表（共 {count} 只）："
 list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
 state-alive: "<green>存活"

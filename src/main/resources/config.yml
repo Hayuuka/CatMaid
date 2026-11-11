@@ -18,3 +18,10 @@ models:
 names:
   - 小铃
   - 汐音
+
+# 头顶名牌。
+# BetterModel 接管原版实体渲染后，原版名牌会一起被隐藏，所以这里用独立的 TextDisplay 悬浮显示。
+nametag:
+  enabled: true
+  scale: 0.8        # 文字缩放，太大挡视线、太小小字看不清
+  height: 0.35      # 相对头顶（实体高度之上）的额外抬升

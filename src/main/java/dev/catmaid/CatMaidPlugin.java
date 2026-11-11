@@ -10,6 +10,7 @@ import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelApplier;
 import dev.catmaid.maid.ModelRegistry;
+import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.trait.TraitInfo;
@@ -34,6 +35,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private MaidManager maidManager;
     private ModelRegistry modelRegistry;
     private ModelApplier modelApplier;
+    private NameTagManager nameTagManager;
     private BukkitTask saveTask;
     private BukkitTask restoreTask;
 
@@ -80,6 +82,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         // 因此按秒轮询恢复；30 秒后仍找不到 NPC 才认为真的丢了，重建兜底。
         scheduleRestore();
 
+        // 头顶名牌：模型会隐藏原版名牌，这里用 TextDisplay 独立显示，按 npcId 错峰跟随
+        nameTagManager = new NameTagManager(this, getConfig());
+        nameTagManager.start(maidManager::all);
+
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(maidManager), this);
 
         // 交互层：右键开菜单 + 5 个 GUI 的点击/拖拽/关闭回写
@@ -111,6 +117,9 @@ public final class CatMaidPlugin extends JavaPlugin {
         if (restoreTask != null) {
             restoreTask.cancel();
             restoreTask = null;
+        }
+        if (nameTagManager != null) {
+            nameTagManager.shutdown();
         }
         if (maidManager != null) {
             maidManager.saveAll();
