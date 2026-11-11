@@ -570,6 +570,14 @@ idle:   { wander-radius: 5 }
 
 ## Phase 4 — 养成层：好感度 / 台词 / 喂食 / 死亡复活
 
+> **状态：代码完成，服务端链路实测通过（2026-11-11）**。喂食 / 铃铛复活 / 台词显示三条需真人客户端，
+> 清单见 `docs/api-facts.md` 18.6。与本节的差异（均记在 18.4）：
+> `AffectionManager` 的 `apply()` 是唯一改动入口（不提供 `Maid#addAffection`）；`MaidModeChangeEvent`
+> 暂不创建、模式台词接在 GUI 切模式处；受击扣好感 5 秒节流（火焰每 10 tick 一跳）；
+> 跟随计时间隔可配（默认 300 秒）；`/catmaid talisman` 只做自助领取。
+> **实测最重要的一条**：玩家型 NPC 的死亡由"伤害事件兜底"处理（`health - finalDamage <= 0`），
+> 死亡事件只作补充；掉在地上的铃铛必须设 `setInvulnerable`，否则会被死亡现场的火烧掉（18.3）。
+
 **目标**：实现"养了个自己的女仆"的核心体验。本阶段是体验重心。
 
 ### AffectionManager
@@ -959,6 +967,9 @@ combat:
 | 死亡后误判 NPC 状态 | **事实**[已实测]：玩家型 NPC 死亡后 Citizens 已自行 despawn（实体移除、`spawned=false`），但 NPC 注册、saves.yml 条目与 npcId 全部保留，`/npc list` 看起来是空的。**采用方案**：死亡流程不必自己 `despawn()`；复活直接 `npc.spawn(loc)`；死亡事件里**不要假设 `npc.isSpawned()` 仍为 true**（详见 Phase 4 死亡流程修订） |
 | 无玩家在线时 NPC 被自动 despawn，误判「tick 没跑」 | **事实**[已实测]：附近无玩家时 Citizens 置女仆 `spawned=false`、`maid.entity()` 为 null，所有行为逻辑空转。**采用方案**：服务端自动化验证前必须先 `/npc spawn <id>`；「跟主人」类观感验收必须由真人客户端完成（P4–P8 验收清单已注明） |
 | `Trait.onSpawn()` 早于 `bind()` 触发 | **事实**[已实测]：Citizens 恢复 NPC 时 `onSpawn()` 触发时 `maid` 仍为 null，`onSpawn` 里的 `maid.applyEquipment()` 不生效。**采用方案**：装备写回由 `MaidManager.attach()` 在 bind 之后补做（Phase 1 恢复流程已注明）；运行期重新 spawn 时 maid 已注入，onSpawn 可正常生效 |
+| 女仆死亡流程不触发 | **事实**[已实测]：玩家型 NPC 的死亡由 `EntityDamageEvent` 里 `health - finalDamage <= 0` 的**兜底分支**处理——我们收到伤害事件时原版尚未完成死亡（日志顺序：铃铛→倒下→原版死亡消息）。**采用方案**：死亡同时挂 `EntityDamageEvent` 兜底 + `EntityDeathEvent`/`PlayerDeathEvent`，`handleDeath` 用 `maid.isAlive()` 幂等；**不要删兜底那一段**（api-facts 18.3-2） |
+| 掉落的铃铛被火烧掉 / 永久丢人 | **事实**[已实测]：雷击引燃的火几秒就把地上的铃铛烧没了。**采用方案**：`drop()` 给物品实体 `setInvulnerable(true)` + `setGlowing(true)`，岩浆里实测存活（18.3-3） |
+| 无玩家在线导致 tick 计时永远攒不满 | **事实**[已实测]：`/npc spawn` 后约 1 分钟 Citizens 就把 NPC 丢掉，FOLLOW_TICK 这类 5 分钟计时在无客户端环境永远到不了阈值。**采用方案**：计时间隔做成配置项（`affection.follow-tick-interval-seconds`），验收时调短验证机制；真人观感仍需客户端（18.3-4） |
 
 ## 附录 B — 阶段依赖关系
 

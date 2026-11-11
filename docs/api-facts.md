@@ -2,13 +2,15 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-11（Phase 3 收口）
+> 最后更新：2026-11-11（Phase 4 收口）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
 **Phase 2 状态：已完成，蓝图验收清单 7/7 通过客户端实测**（详见第 16 节）。
 **Phase 3 状态：已完成并收口**（跟随 / >40 格传送 / 跨世界双向 / 坐下起立 / 动画全部实测通过，
 详见第 17 节；**接手请直接读 17.2、17.4、17.9，P4 开工前必读 17.11**）。
+**Phase 4 状态：代码完成，服务端链路实测通过；喂食/复活/台词三条需客户端**（详见第 18 节，
+接手 P5 前读 18.3 与 18.7）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -1161,3 +1163,122 @@ walk 每 1050ms 重播（walk 本身 1 秒一循环、首尾同帧，重播几�
 
 P3 的收口状态：代码 6 类全落地，验收 5 项实测通过 + 1 项服主决定不验（10 只真人同屏 TPS），
 未单独验证疾跑/骑马跟随。提交记录：`b1e558e` → `b6456b6` → `36b4c45` → `03d9082`。
+
+---
+
+## 18. Phase 4 交接（养成层：好感度 / 台词 / 喂食 / 死亡复活，2026-11-11）
+
+### 18.1 阶段结论
+
+**代码全部落地，服务端链路实测通过**：跟随计时涨好感、等级升降（含背包容量日志）、
+死亡转铃铛（无掉落 / PDC 带 maid_id / 掉在地上烧不掉）、重启不复活。
+**三条交互必须真人客户端**：喂食、铃铛复活、台词显示（都要 `NPCRightClickEvent` /
+`PlayerInteractEvent` 或聊天窗口）。清单见 18.6。
+
+### 18.2 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `dialogue/AffectionReason` | 好感度变动原因的枚举，负责映射到 config 的 `affection.gain/loss` 键 |
+| `dialogue/AffectionManager` | 数值/等级/容量/伤害加成；`apply()` 是唯一改动入口（事件→clamp→等级变化特效/台词/提示→落库） |
+| `dialogue/DialogueManager` | 台词随机抽取、chat/actionbar 双通道、二级键（`on_mode_change.<MODE>`）、随机待机台词每女仆冷却 |
+| `event/MaidAffectionChangeEvent` | 好感度变动事件，可取消，`setNewValue` 可让外部插件改数值 |
+| `event/MaidDeathEvent` | 女仆倒下通知（不可取消，事后再通知语义） |
+| `listener/MaidDamageListener` | 受击好感度与台词、死亡兜底、清掉落、发铃铛 |
+| `listener/TalismanListener` | 铃铛复活 + 魂符召唤（同一个 `PlayerInteractEvent` 里分流） |
+| `util/MaidItems` | 铃铛/魂符的构造与 PDC 识别、主手消耗 1 个 |
+| `resources/dialogue.yml` | 蓝图 P4 的全部台词（首次启动释放到数据目录） |
+| `BehaviorManager` | 新增 `pulse()`：在每 tick 分发里推 FOLLOW_TICK 与随机待机台词（不做成 trait，见 17.2） |
+| `MaidManager` | 召唤成功后说 `on_summon`；`forget()` 时清好感计时与台词冷却 |
+| `GuiManager` | 切模式后说 `on_mode_change.<MODE>` |
+| `MaidInteractListener` | 手持食物右键 = 喂食（替换 P2 的 TODO） |
+| `CatMaidCommand` | 新增 `/catmaid talisman [数量]`（`catmaid.use`），Tab 补全按权限分流 |
+| `config.yml` / `messages.yml` | 新增 `interaction` / `affection` / `dialogue` / `death` 段与全部新文案 |
+
+### 18.3 实测新增的 API 行为事实
+
+**(1) 玩家型 NPC 完全无法用原版命令定位。** `/damage 小铃 1` → `Invalid name or UUID`；
+`@e[type=player]`、`/data get entity <npc uuid>` 同样无效（16.6 已记，本轮再次确认）。
+**唯一可控的伤害制造方式**是"打位置不打人"：
+`citizens save` → 解析 `saves.yml` 里该 NPC 的 `x/y/z` → `summon minecraft:lightning_bolt <x y z>`
+（每发 5 点，AABB ±3 格，会误伤 3 格内的其他女仆）或 `setblock <x y z> lava`（更快，约 3 秒烧死）。
+
+**(2) 死亡由"伤害事件兜底"路径处理，不是死亡事件。** 实测日志顺序是
+`铃铛掉落…` → `倒下了…` → 原版 `was struck by lightning` / `burned to death`，
+即我们的处理发生在原版死亡结算之前，来自 `EntityDamageEvent` 里
+`health - finalDamage <= 0` 的预判分支。`EntityDeathEvent`/`PlayerDeathEvent` 是否也会派发
+本轮没有单独区分（两者都注册了，`handleDeath` 用 `maid.isAlive()` 幂等）。
+**不要删掉伤害兜底那一段**，否则可能整条死亡流程不触发。
+
+**(3) 掉在地上的铃铛会被火烧掉。** 第一次死亡测试（雷击引燃火焰）后 2 分钟查询，
+死亡点附近**没有任何 item 实体**——铃铛已被烧毁。现在 `drop()` 会给掉落物
+`setInvulnerable(true)` + `setGlowing(true)`：在岩浆里实测试死亡后铃铛仍在，
+`Invulnerable: 1b`，`Item.components."minecraft:custom_data"` 里
+`PublicBukkitValues: {"catmaid:maid_id": "<uuid>"}` 完好。
+
+**(4) Citizens 的自动 despawn 会打断一切 tick 计时。** 无玩家在线时，`/npc spawn` 后约 1 分钟
+NPC 就被丢弃（再 `spawn` 会回"你生成了…"而不是"已经在另一个位置生成"）。
+所以 5 分钟的 FOLLOW_TICK 在无客户端环境里**永远攒不满**：本轮把间隔做成可配置
+（`affection.follow-tick-interval-seconds`），用 15 秒间隔验证机制，默认 300 秒未跑满。
+
+**(5) 同一个 NPC 连续 `npc spawn` 会触发 moonrise 警告**
+`Entity uuid already exists: ... can't add EntityHumanNPC` —— 测试里 3 秒内重复 spawn 造成的，
+复活逻辑用 `npc.isSpawned()` 分支（已生成就 teleport）规避，实际不会走到这条。
+
+### 18.4 与蓝图的有意差异
+
+| 位置 | 蓝图 | 实际 | 理由 |
+|---|---|---|---|
+| `Maid#addAffection(delta, reason)`（0.7） | 领域对象上提供 | 不提供，只留 `AffectionManager.apply` | 领域对象不该反向持有服务/事件总线；单一入口更不容易绕过事件与容量同步 |
+| `event/MaidModeChangeEvent`（0.5） | 列出该类 | 未创建；模式台词接在 `GuiManager` 切模式处 | 当前唯一调用点就一个，为一个调用点建事件类是超前设计（agent.md 3.3）；P8 加 `/catmaid mode` 时再补，届时把台词一并搬进去 |
+| 受击扣好感 | 「女仆受击 -0.5」 | 5 秒内多次伤害只算一次 | 火焰/岩浆每 10 tick 一跳，不节流一分钟就能把好感清空 |
+| 跟随计时 | 固定 5 分钟 | 可配置，默认 300 秒 | 验收必须能调短；同时是 P8「数值全可配」的一部分 |
+| `/catmaid talisman` | `[玩家] [数量]` | 只做 `[数量]` 自助领取 | 给别人发用原版 `/give` 即可（PDC 能跟着走），批量分发留 P8 |
+| `config.yml` 新增段 | — | **不自动补键**（只有 messages.yml 会补） | 旧配置文件不会带上 `interaction.feedable` 等新段，喂食会静默失效 → 升级步骤见 18.7 |
+
+### 18.5 验收结果（服务端实测 2026-11-11 22:28–22:39）
+
+| 蓝图验收项 | 结果 | 依据 |
+|---|---|---|
+| 喂食：食物消耗、粒子、好感 +1、台词、60s 冷却 | **⏳ 待客户端** | 代码路径已接（`MaidInteractListener#feed`），需要真人右键 |
+| 好感度跨等级：锁定槽解锁、升级特效与台词 | **✅ 机制通过 / ⏳ 观感待客户端** | 日志 `缀理 好感度 38.5 → 40.5 升到等级 2（背包 33 格）`；降级同样打印 `44.0 → 39.5 降到等级 1`；DB 数值同步 |
+| 杀死女仆 → 无掉落、铃铛入包/落地、DB alive=0、重启不复活 | **✅ 通过（除"入包"分支）** | 死亡点附近 item 实体数 = 1（只有铃铛）；`alive=0`、好感 44→24（-20）；重启后无该女仆的装备/生成日志；`admin list` 显示「铃铛」 |
+| 铃铛使用：非主人无效；消耗钻石复活、好感 -20、on_revive 台词 | **⚠ 好感 -20 已通过（死亡时扣）；复活交互待客户端** | 复活分支代码含材料校验/消耗/`npc.spawn`/重新挂模型/重新绑定 trait |
+| 随机待机台词低频出现且不刷屏 | **⏳ 待客户端** | 掷骰 3 分钟 5%、每女仆 5 分钟冷却，只在待机/跟随模式触发；台词只发给在线主人，无客户端时静默 |
+| 编译与启动 | **✅ 通过** | `shadowJar` 通过；build 62 多次启动除 JLine 那条已知 ERROR 外无异常 |
+
+自测手法：RCON + `citizens save` 解析坐标 + 闪电/岩浆制造伤害 + 直读 SQLite 与日志（脚本临时生成，已删）。
+
+### 18.6 客户端待验清单（给服主）
+
+测试服已备好现场：`缀理`（铃铛态，好感 24，铃铛掉在 `15.5 / 73 / 1.3` 附近、发光不可燃）、
+`汐音`（存活，好感 ~9.5）。
+
+1. 手持面包右键 `汐音` → 食物 -1、爱心粒子、吃音效、聊天出现「[汐音] » 唔、好吃……谢谢主人！」
+   且**不开菜单**；60 秒内再喂出「刚吃过」提示且不扣食物。
+2. 对话面板看背包：好感升到 20 后第 3 行解锁（容量 30）；升到 40 后 33 格。
+3. 打死 `汐音`（/kill 不行，用 `/npc` 无法选中；建议直接打她或用岩浆）→ 铃铛进背包（主人在线分支）、
+   无其他掉落、聊天出现 on_death 台词、「倒下了」提示。
+4. 拿铃铛 + 钻石右键 → 铃铛消失、钻石 -1、身边出现她、on_revive 台词、爱心与铃声音效。
+5. 用别的账号右键铃铛 → 「铃铛毫无反应……」。
+6. `/catmaid talisman 1` → 得到魂符，手持右键 → 召唤一只新女仆、台词 on_summon。
+7. 静置 3~5 分钟，确认随机台词不会连续刷屏。
+
+### 18.7 升级与部署注意
+
+1. **`config.yml` 不会自动补新段**（只有 `messages.yml` 有回填逻辑）。升级必须：
+   备份 → 删掉 `plugins/CatMaid/config.yml`（或手动补 `interaction` / `affection` / `dialogue` / `death` 四段）→ 重启。
+   否则 `interaction.feedable` 为空 = 喂食永远不触发。
+2. `dialogue.yml` 首次启动会释放到数据目录，之后以文件为准；改台词重启即可（P8 接 `/catmaid admin reload`）。
+3. 台词 `channel: actionbar` 时聊天框不会留记录，调试时先切回 `chat`。
+
+### 18.8 P5-P7 接手要点
+
+- 好感度一律 `affectionManager.apply(maid, affectionManager.gain(AffectionReason.WORK_HARVEST), WORK_HARVEST)`，
+  不要直接 `maid.setAffection`（会绕过事件与容量同步，16.7-4）。
+- 台词用 `dialogue.send(maid, "on_work_done")`；二级键用 `send(maid, key, subKey)`。
+- 战斗伤害加成用 `affectionManager.damageBonus(affectionManager.level(maid.getAffection()))`（P7）。
+- 死亡后 `maid.entity()` 为 null、BehaviorManager 自动空转；P5/P6 的 Mode 不必自己判断存活。
+- 铃铛/魂符的 PDC 键在 `MaidItems` 里，新增特殊物品请沿用同一个类，别再散落 `NamespacedKey`。
+
+P4 收口状态：新增 8 个类 / 改 8 个文件；服务端 3 项实测通过、1 项部分通过、3 项待客户端。

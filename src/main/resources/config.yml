@@ -37,3 +37,48 @@ follow:
 # 待机模式：在 home 周围闲逛
 idle:
   wander-radius: 5
+
+# ---- Phase 4 养成层 ----
+
+# 交互
+interaction:
+  # 魂符材质（右键召唤）。必须与 /catmaid talisman 发放的物品一致
+  talisman-material: AMETHYST_SHARD
+  # 喂食冷却：同一只女仆两次喂食的最小间隔
+  feed-cooldown-seconds: 60
+  # 可喂的食物（手持其中之一右键女仆 = 喂食，而不是开菜单）
+  feedable:
+    - BREAD
+    - COOKED_COD
+    - COOKED_SALMON
+    - BAKED_POTATO
+    - COOKED_BEEF
+    - COOKED_PORKCHOP
+    - COOKIE
+    - CAKE
+    - SWEET_BERRIES
+    - GLOW_BERRIES
+
+# 好感度增减（0..100）。等级阈值在代码里（0/20/40/60/80），
+# 每级对应的背包容量是 27/30/33/36/36 格
+affection:
+  gain:
+    feed: 1.0            # 喂一次
+    work-harvest: 0.1    # 收割一次（P5）
+    work-breed: 0.1      # 繁殖/剪毛/挤奶一次（P6）
+    work-kill: 0.2       # 击杀一只敌怪（P7）
+    follow-tick: 0.5     # 跟随时每 5 分钟
+  loss:
+    hurt: 0.5            # 受击（5 秒内多次伤害算一次）
+    death: 20.0          # 死亡（羁绊等级减半）
+  # 跟随多久加一次 follow-tick（秒）。蓝图要求 5 分钟
+  follow-tick-interval-seconds: 300
+
+# 台词
+dialogue:
+  channel: chat          # chat | actionbar
+
+# 死亡与复活
+death:
+  # 唤醒铃铛的代价，格式 材质:数量
+  revive-cost: DIAMOND:1

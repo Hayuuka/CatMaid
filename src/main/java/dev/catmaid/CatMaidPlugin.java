@@ -4,9 +4,13 @@ import dev.catmaid.behavior.BehaviorManager;
 import dev.catmaid.command.CatMaidCommand;
 import dev.catmaid.data.Database;
 import dev.catmaid.data.MaidRepository;
+import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.gui.GuiManager;
+import dev.catmaid.listener.MaidDamageListener;
 import dev.catmaid.listener.MaidInteractListener;
 import dev.catmaid.listener.PlayerConnectionListener;
+import dev.catmaid.listener.TalismanListener;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelAnimator;
@@ -79,11 +83,14 @@ public final class CatMaidPlugin extends JavaPlugin {
         repository = new MaidRepository(database, getLogger());
         modelRegistry = new ModelRegistry(getConfig());
         modelApplier = new ModelApplier(getLogger());
-        // 行为层要在 MaidManager 之前建好：它的 tick 由本类的调度器驱动，
-        // 而 MaidManager 在移除女仆时要清掉行为层的 per-maid 状态。
-        behaviorManager = new BehaviorManager(getConfig(), new ModelAnimator(getLogger()));
+        // 台词与好感度先于行为层创建：BehaviorManager 每 tick 要推这两件事（P4），
+        // 而 MaidManager 在召唤/移除时也要用台词与好感度状态。
+        DialogueManager dialogueManager = new DialogueManager(this);
+        AffectionManager affectionManager = new AffectionManager(getConfig(), dialogueManager, repository);
+        behaviorManager = new BehaviorManager(getConfig(), new ModelAnimator(getLogger()),
+                affectionManager, dialogueManager);
         maidManager = new MaidManager(repository, modelRegistry, modelApplier, behaviorManager,
-                getConfig(), getLogger());
+                dialogueManager, getConfig(), getLogger());
 
         maidManager.loadAll();
         // Citizens 异步加载 NPC（启动后数秒才完成），BetterModel 的模型表也在 delayed init 之后才可用。
@@ -96,13 +103,20 @@ public final class CatMaidPlugin extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(maidManager), this);
 
-        // 交互层：右键开菜单 + 5 个 GUI 的点击/拖拽/关闭回写
-        GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier);
+        // 交互层：右键开菜单/喂食 + 5 个 GUI 的点击/拖拽/关闭回写
+        GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier, dialogueManager);
         getServer().getPluginManager().registerEvents(guiManager, this);
         getServer().getPluginManager().registerEvents(
-                new MaidInteractListener(maidManager, guiManager, this), this);
+                new MaidInteractListener(maidManager, guiManager, this, affectionManager, dialogueManager), this);
 
-        CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry);
+        // 养成层：受击/死亡转铃铛、铃铛复活、魂符召唤（P4）
+        getServer().getPluginManager().registerEvents(
+                new MaidDamageListener(this, maidManager, affectionManager, dialogueManager, repository), this);
+        getServer().getPluginManager().registerEvents(
+                new TalismanListener(this, maidManager, modelRegistry, modelApplier,
+                        dialogueManager, repository), this);
+
+        CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this);
         PluginCommand pluginCommand = getCommand("catmaid");
         if (pluginCommand != null) {
             pluginCommand.setExecutor(command);

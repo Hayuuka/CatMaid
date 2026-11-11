@@ -2,6 +2,7 @@ package dev.catmaid.maid;
 
 import dev.catmaid.behavior.BehaviorManager;
 import dev.catmaid.data.MaidRepository;
+import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.event.MaidSummonEvent;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
@@ -37,6 +38,7 @@ public final class MaidManager {
     private final ModelRegistry models;
     private final ModelApplier modelApplier;
     private final BehaviorManager behavior;
+    private final DialogueManager dialogue;
     private final FileConfiguration config;
     private final Logger logger;
 
@@ -45,11 +47,13 @@ public final class MaidManager {
     private final Set<UUID> awaitingNpc = ConcurrentHashMap.newKeySet();
 
     public MaidManager(MaidRepository repository, ModelRegistry models, ModelApplier modelApplier,
-                       BehaviorManager behavior, FileConfiguration config, Logger logger) {
+                       BehaviorManager behavior, DialogueManager dialogue,
+                       FileConfiguration config, Logger logger) {
         this.repository = repository;
         this.models = models;
         this.modelApplier = modelApplier;
         this.behavior = behavior;
+        this.dialogue = dialogue;
         this.config = config;
         this.logger = logger;
     }
@@ -190,6 +194,8 @@ public final class MaidManager {
 
         maids.put(maid.getId(), maid);
         repository.insert(maid);
+        // 台词在落库之后说：她开口时数据已经稳了，重启也不会变成"说了话但没这个人"
+        dialogue.send(maid, "on_summon");
         return maid;
     }
 

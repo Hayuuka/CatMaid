@@ -3,15 +3,18 @@ package dev.catmaid.command;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.ModelRegistry;
+import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
@@ -22,16 +25,19 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * /catmaid 命令树。Phase 1 只实现 admin 三个子命令，其余在 Phase 8 补齐。
+ * /catmaid 命令树。Phase 1 实现了 admin 三个子命令，Phase 4 加了 talisman（魂符发放），
+ * 其余（gui/mode/info/rename/sethome/admin reload 等）在 Phase 8 补齐。
  */
 public final class CatMaidCommand implements CommandExecutor, TabCompleter {
 
     private final MaidManager maidManager;
     private final ModelRegistry models;
+    private final Plugin plugin;
 
-    public CatMaidCommand(MaidManager maidManager, ModelRegistry models) {
+    public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin) {
         this.maidManager = maidManager;
         this.models = models;
+        this.plugin = plugin;
     }
 
     @Override
@@ -41,18 +47,22 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             sendHelp(sender);
             return true;
         }
-        String sub = args[0].toLowerCase(Locale.ROOT);
-        if (!sub.equals("admin")) {
-            sendHelp(sender);
-            return true;
+        switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "talisman" -> talisman(sender, args);
+            case "admin" -> admin(sender, args);
+            default -> sendHelp(sender);
         }
+        return true;
+    }
+
+    private void admin(CommandSender sender, String[] args) {
         if (!sender.hasPermission("catmaid.admin")) {
             Messages.send(sender, "no-permission");
-            return true;
+            return;
         }
         if (args.length < 2) {
             sendHelp(sender);
-            return true;
+            return;
         }
         switch (args[1].toLowerCase(Locale.ROOT)) {
             case "summon" -> summon(sender, args);
@@ -60,7 +70,39 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "list" -> list(sender, args);
             default -> sendHelp(sender);
         }
-        return true;
+    }
+
+    /**
+     * 发魂符给自己。蓝图 P4 的写法是 {@code [玩家] [数量]}，这里只做自助领取：
+     * 给别人发用原版 /give 即可（物品带 PDC，/give 也能带）
+     * —— 管理员的批量分发留到 P8 的完整命令树。
+     */
+    private void talisman(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        int amount = 1;
+        if (args.length >= 2) {
+            try {
+                amount = Math.max(1, Math.min(64, Integer.parseInt(args[1])));
+            } catch (NumberFormatException e) {
+                sendHelp(player);
+                return;
+            }
+        }
+        Material material = Material.matchMaterial(
+                plugin.getConfig().getString("interaction.talisman-material", "AMETHYST_SHARD"));
+        if (material == null) {
+            material = Material.AMETHYST_SHARD;
+        }
+        player.getInventory().addItem(MaidItems.talisman(plugin, material, amount)).values()
+                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        Messages.send(player, "talisman-received", Map.of("amount", String.valueOf(amount)));
     }
 
     private void summon(CommandSender sender, String[] args) {
@@ -184,11 +226,19 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
+        if (args.length == 1) {
+            // 普通玩家只有 talisman，不要因为没 admin 权限就把补全整个清空
+            List<String> subs = new ArrayList<>();
+            if (sender.hasPermission("catmaid.use")) {
+                subs.add("talisman");
+            }
+            if (sender.hasPermission("catmaid.admin")) {
+                subs.add("admin");
+            }
+            return filter(subs, args[0]);
+        }
         if (!sender.hasPermission("catmaid.admin")) {
             return List.of();
-        }
-        if (args.length == 1) {
-            return filter(List.of("admin"), args[0]);
         }
         if (args.length == 2) {
             return filter(List.of("summon", "remove", "list"), args[1]);

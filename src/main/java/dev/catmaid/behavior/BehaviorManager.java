@@ -2,6 +2,8 @@ package dev.catmaid.behavior;
 
 import dev.catmaid.behavior.mode.FollowMode;
 import dev.catmaid.behavior.mode.IdleMode;
+import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.ModelAnimator;
 import org.bukkit.Location;
@@ -18,18 +20,27 @@ import java.util.Map;
  * <p>驱动方是 CatMaidPlugin 里的调度器（每 tick 一次），<b>不是</b> Citizens 的 Trait#run——
  * 玩家型 NPC 的 trait 根本不会被 tick，原因写在 {@link dev.catmaid.maid.MaidTrait} 的类注释里。
  *
- * <p>顺带统一驱动模型姿态：谁在导航就是走，否则站。放这里而不是放进各 Mode，
- * 是为了让 P5-P7 的农活/放牧/战斗不必各自记得播动画。
+ * <p>顺带统一驱动两件"周期性"的事，避免各 Mode / Trait 各自记得：
+ * <ol>
+ *   <li>模型姿态（谁在导航就是走，否则站）；</li>
+ *   <li>好感度的跟随计时与随机待机台词（P4）。这两件事都需要"每 tick 推一下"，
+ *       而 api-facts 17.2 已经证明 trait 那套推不动，所以统一挂在这里。</li>
+ * </ol>
  */
 public final class BehaviorManager {
 
     private final Map<Maid.Mode, BehaviorMode> modes = new EnumMap<>(Maid.Mode.class);
     private final ModelAnimator animator;
+    private final AffectionManager affection;
+    private final DialogueManager dialogue;
     /** 全局 tick 计数器：所有模式用它做 `tick % N == npcId % N` 的错峰。 */
     private int tickCounter;
 
-    public BehaviorManager(FileConfiguration config, ModelAnimator animator) {
+    public BehaviorManager(FileConfiguration config, ModelAnimator animator,
+                           AffectionManager affection, DialogueManager dialogue) {
         this.animator = animator;
+        this.affection = affection;
+        this.dialogue = dialogue;
         IdleMode idle = new IdleMode(config);
         modes.put(Maid.Mode.IDLE, idle);
         // 主人不在线时 FollowMode 会把女仆交给 IdleMode，两者共用一个实例（它自己没有状态）
@@ -60,6 +71,8 @@ public final class BehaviorManager {
             return;
         }
 
+        pulse(maid, tick);
+
         if (maid.isSitting()) {
             // 坐下是跨模式的硬拦截：任何模式都不许移动，只让待机逻辑做点小动作
             Movement.stop(maid);
@@ -80,8 +93,24 @@ public final class BehaviorManager {
     /** 女仆被移除时清掉各模式与动画记录的 per-maid 状态。 */
     public void forget(Maid maid) {
         animator.forget(maid.getId());
+        affection.forget(maid.getId());
+        dialogue.forget(maid.getId());
         for (BehaviorMode mode : modes.values()) {
             mode.onDisable(maid);
+        }
+    }
+
+    /**
+     * 周期性的养成事项。跟随计时只在"跟随模式"累加（蓝图：跟随状态下每 5 分钟 +0.5），
+     * 随机待机台词只在待机/跟随两种"没事干"的模式里掷骰子。
+     */
+    private void pulse(Maid maid, int tick) {
+        Maid.Mode mode = maid.getMode();
+        if (mode == Maid.Mode.FOLLOW) {
+            affection.tickFollowing(maid);
+        }
+        if (mode == Maid.Mode.FOLLOW || mode == Maid.Mode.IDLE) {
+            dialogue.tickIdle(maid, tick);
         }
     }
 

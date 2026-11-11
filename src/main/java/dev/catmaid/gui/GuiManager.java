@@ -1,5 +1,6 @@
 package dev.catmaid.gui;
 
+import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidInventory;
 import dev.catmaid.maid.MaidManager;
@@ -70,11 +71,14 @@ public final class GuiManager implements Listener {
     private final MaidManager maidManager;
     private final ModelRegistry models;
     private final ModelApplier modelApplier;
+    private final DialogueManager dialogue;
 
-    public GuiManager(MaidManager maidManager, ModelRegistry models, ModelApplier modelApplier) {
+    public GuiManager(MaidManager maidManager, ModelRegistry models, ModelApplier modelApplier,
+                      DialogueManager dialogue) {
         this.maidManager = maidManager;
         this.models = models;
         this.modelApplier = modelApplier;
+        this.dialogue = dialogue;
     }
 
     // ---- 打开 ----
@@ -498,6 +502,9 @@ public final class GuiManager implements Listener {
         }
         maid.setMode(target);
         maidManager.saveAsync(maid);
+        // 模式台词（P4）：{@code on_mode_change.<MODE>}。放在这里而不是 Maid#setMode 里，
+        // 是因为领域对象不该反向依赖台词服务；P8 的命令行切模式要记得同步补一句。
+        dialogue.send(maid, "on_mode_change", target.name());
         renderModeIcons(top, maid);
         Messages.send(player, "gui.mode-changed",
                 Map.of("name", maid.getName(), "mode", modeName(target)));
