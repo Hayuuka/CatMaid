@@ -8,6 +8,7 @@ import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.npc.NPC;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -229,9 +230,56 @@ public final class GuiManager implements Listener {
         ItemStack stack = new ItemStack(Material.BOOK);
         ItemMeta meta = stack.getItemMeta();
         meta.displayName(noItalic(Messages.get("gui.info-title", ph)));
-        meta.lore(Messages.getList("gui.info-lore", ph).stream().map(GuiManager::noItalic).toList());
+
+        List<Component> lore = new ArrayList<>();
+        Messages.getList("gui.info-lore-top", ph).forEach(line -> lore.add(noItalic(line)));
+        lore.add(equipmentLine(maid));
+        Messages.getList("gui.info-lore-bottom", ph).forEach(line -> lore.add(noItalic(line)));
+        meta.lore(lore);
+
         stack.setItemMeta(meta);
         return stack;
+    }
+
+    /**
+     * 信息书里的装备行。女仆模型会盖住原版装备层，界面上看不到穿了什么，
+     * 所以在书里列出来，避免"放进去了但不知道有没有生效"。
+     */
+    private Component equipmentLine(Maid maid) {
+        // adventure 5.x 已移除 MutableComponent，Component.text() 直接返回 TextComponent.Builder
+        TextComponent.Builder line = Component.text()
+                .decoration(TextDecoration.ITALIC, false)
+                .append(Messages.get("gui.info-equipment-label"));
+        boolean any = false;
+        for (int i = 0; i < MaidInventory.EQUIPMENT_SLOTS; i++) {
+            ItemStack item = maid.inventory().get(i);
+            if (item == null) {
+                continue;
+            }
+            if (any) {
+                line.append(Component.text("  "));
+            }
+            line.append(Messages.get(EQUIP_HINT_KEYS[i]).decoration(TextDecoration.ITALIC, false));
+            line.append(Component.text(" "));
+            line.append(itemName(item).decoration(TextDecoration.ITALIC, false));
+            any = true;
+        }
+        if (!any) {
+            line.append(Messages.get("gui.info-equipment-empty"));
+        }
+        return line.build();
+    }
+
+    /** 优先用玩家自定义名，否则交给客户端按语言翻译材质名（服务端拿不到中文名）。 */
+    private Component itemName(ItemStack item) {
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null && meta.hasDisplayName()) {
+            Component custom = meta.displayName();
+            if (custom != null) {
+                return custom;
+            }
+        }
+        return Component.translatable(item.getType().translationKey());
     }
 
     private ItemStack sitIcon(Maid maid) {

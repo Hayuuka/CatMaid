@@ -50,12 +50,15 @@ gui:
   button-next: "<gray>下一页 →"
 
   info-title: "<light_purple>{name}"
-  info-lore:
+  info-lore-top:
     - "<dark_gray>——————————————"
     - "<gray>主人：<white>{owner}"
     - "<gray>称呼：<white>{title}"
     - "<gray>好感度：<light_purple>{affection}<gray> / 100 <dark_gray>({level})"
     - "<gray>模式：<white>{mode}"
+  info-equipment-label: "<gray>装备："
+  info-equipment-empty: "<dark_gray>未装备"
+  info-lore-bottom:
     - "<gray>背包：<white>{used}<gray> / {capacity} 格"
     - "<dark_gray>——————————————"
     - "<gray>击杀 <white>{kills} <gray>· 收割 <white>{harvests} <gray>· 繁殖 <white>{breeds}"
