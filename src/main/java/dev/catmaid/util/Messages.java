@@ -65,11 +65,19 @@ public final class Messages {
     }
 
     public static List<Component> getList(String key) {
+        return getList(key, Map.of());
+    }
+
+    /** 列表型文案（GUI 的 lore）；占位符同样在解析前替换。 */
+    public static List<Component> getList(String key, Map<String, String> placeholders) {
         List<Component> lines = new ArrayList<>();
         if (config == null) {
             return lines;
         }
         for (String line : config.getStringList(key)) {
+            for (Map.Entry<String, String> entry : placeholders.entrySet()) {
+                line = line.replace("{" + entry.getKey() + "}", entry.getValue());
+            }
             lines.add(MINI.deserialize(line));
         }
         return lines;

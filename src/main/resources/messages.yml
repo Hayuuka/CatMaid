@@ -14,6 +14,7 @@ summon-max: "<red>该玩家最多只能拥有 {max} 只女仆。"
 summon-no-model: "<red>配置里没有任何可用模型，请检查 config.yml 的 models。"
 remove-success: "<yellow>已送走女仆 {name}。"
 maid-not-found: "<red>找不到这个女仆：{name}"
+not-your-maid: "<red>她不是你的女仆哦。"
 
 list-header: "<light_purple>女仆列表（共 {count} 只）："
 list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
@@ -21,7 +22,69 @@ state-alive: "<green>存活"
 state-bell: "<gray>铃铛"
 
 help:
-  - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> Phase 1 可用命令："
+  - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> 当前可用命令："
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
   - "<gray>/catmaid admin remove <玩家|女仆UUID>"
+  - "<dark_gray>右键自己的女仆可以打开菜单。"
+
+# ---- Phase 2 界面文案 ----
+gui:
+  main-title: "<light_purple>{name} <dark_gray>·</dark_gray> <gray>主菜单"
+  backpack-title: "<light_purple>{name} <dark_gray>·</dark_gray> <gray>背包"
+  equipment-title: "<light_purple>{name} <dark_gray>·</dark_gray> <gray>装备"
+  mode-title: "<light_purple>{name} <dark_gray>·</dark_gray> <gray>模式"
+  model-title: "<light_purple>{name} <dark_gray>·</dark_gray> <gray>模型 <dark_gray>({page}/{pages})"
+
+  button-mode: "<yellow>模式选择"
+  button-backpack: "<gold>背包管理"
+  button-backpack-lore: "<gray>存放 {capacity} 格物品"
+  button-equipment: "<aqua>装备管理"
+  button-equipment-lore: "<gray>主手 / 副手 / 四件护甲"
+  button-model: "<light_purple>模型选择"
+  button-model-lore: "<gray>当前模型：<white>{model}"
+  button-sit-on: "<green>坐下 <dark_gray>(点一下让她站起来)"
+  button-sit-off: "<gray>起立 <dark_gray>(点一下让她坐下)"
+  button-back: "<gray>← 返回主菜单"
+  button-prev: "<gray>← 上一页"
+  button-next: "<gray>下一页 →"
+
+  info-title: "<light_purple>{name}"
+  info-lore:
+    - "<dark_gray>——————————————"
+    - "<gray>主人：<white>{owner}"
+    - "<gray>称呼：<white>{title}"
+    - "<gray>好感度：<light_purple>{affection}<gray> / 100 <dark_gray>({level})"
+    - "<gray>模式：<white>{mode}"
+    - "<gray>背包：<white>{used}<gray> / {capacity} 格"
+    - "<dark_gray>——————————————"
+    - "<gray>击杀 <white>{kills} <gray>· 收割 <white>{harvests} <gray>· 繁殖 <white>{breeds}"
+    - "<gray>剪毛 <white>{shears} <gray>· 挤奶 <white>{milks}"
+
+  mode-idle: "闲置"
+  mode-follow: "跟随"
+  mode-combat: "战斗"
+  mode-farm: "农业"
+  mode-ranch: "畜牧"
+  mode-button: "<gray>{mode}"
+  mode-selected: "<green>✔ <white>{mode}"
+  mode-current-lore:
+    - "<gray>当前模式"
+
+  level-0: "陌生人"
+  level-1: "熟识"
+  level-2: "伙伴"
+  level-3: "挚爱"
+  level-4: "羁绊"
+
+  model-entry: "<white>{model}"
+  model-selected: "<green>✔ <white>{model}"
+
+  locked-slot: "<dark_gray>未解锁"
+  locked-slot-lore:
+    - "<gray>提升好感度后开启"
+
+  sit-on: "<green>{name} 坐下了。"
+  sit-off: "<green>{name} 站起来了。"
+  mode-changed: "<green>已把 {name} 的模式换成「{mode}」。"
+  model-changed: "<green>已把 {name} 换成模型 {model}。"
