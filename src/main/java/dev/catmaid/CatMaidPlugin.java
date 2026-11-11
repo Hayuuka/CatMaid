@@ -3,6 +3,8 @@ package dev.catmaid;
 import dev.catmaid.command.CatMaidCommand;
 import dev.catmaid.data.Database;
 import dev.catmaid.data.MaidRepository;
+import dev.catmaid.gui.GuiManager;
+import dev.catmaid.listener.MaidInteractListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
@@ -79,6 +81,12 @@ public final class CatMaidPlugin extends JavaPlugin {
         scheduleRestore();
 
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(maidManager), this);
+
+        // 交互层：右键开菜单 + 5 个 GUI 的点击/拖拽/关闭回写
+        GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier);
+        getServer().getPluginManager().registerEvents(guiManager, this);
+        getServer().getPluginManager().registerEvents(
+                new MaidInteractListener(maidManager, guiManager, this), this);
 
         CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry);
         PluginCommand pluginCommand = getCommand("catmaid");
