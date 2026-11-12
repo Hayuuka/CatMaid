@@ -38,6 +38,19 @@ follow:
 idle:
   wander-radius: 5
 
+# ---- Phase 5 农业模式 ----
+# 女仆在中心点周围找成熟作物，走过去收割。每次扫描 17×3×17 格，每 20 tick 一次（按 npcId 错峰）。
+farm:
+  radius: 8          # 以中心向外扫几格（x/z），y 方向只扫 -1..+1，避免上下乱找
+  center: home       # home = 在/家附近干；self = 跟着自己脚下走（适合随身带出去开荒）
+  crops:             # 允许收割的作物（必须是原版 Ageable 作物，成熟判定靠 age 到顶）
+    - WHEAT
+    - CARROTS
+    - POTATOES
+    - BEETROOTS
+    - NETHER_WART
+    - COCOA
+
 # ---- Phase 4 养成层 ----
 
 # 交互

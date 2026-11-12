@@ -1,5 +1,6 @@
 package dev.catmaid.behavior;
 
+import dev.catmaid.behavior.mode.FarmMode;
 import dev.catmaid.behavior.mode.FollowMode;
 import dev.catmaid.behavior.mode.IdleMode;
 import dev.catmaid.dialogue.AffectionManager;
@@ -45,9 +46,10 @@ public final class BehaviorManager {
         modes.put(Maid.Mode.IDLE, idle);
         // 主人不在线时 FollowMode 会把女仆交给 IdleMode，两者共用一个实例（它自己没有状态）
         modes.put(Maid.Mode.FOLLOW, new FollowMode(config, idle));
+        modes.put(Maid.Mode.FARM, new FarmMode(config, dialogue));
     }
 
-    /** 未实现的模式（COMBAT/FARM/RANCH 属 P5-P7）返回 null。 */
+    /** 未实现的模式（COMBAT/RANCH 属 P6-P7）返回 null。 */
     public BehaviorMode get(Maid.Mode mode) {
         return modes.get(mode);
     }
@@ -88,7 +90,7 @@ public final class BehaviorManager {
 
         BehaviorMode mode = modes.get(maid.getMode());
         if (mode == null) {
-            // 蓝图 P5-P7 的模式还没实现，先按跟随跑，免得切过去就变成木头人
+            // 蓝图 P6-P7 的模式还没实现，先按跟随跑，免得切过去就变成木头人
             mode = modes.get(Maid.Mode.FOLLOW);
         }
         mode.tick(maid, tick);
