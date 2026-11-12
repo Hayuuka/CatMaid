@@ -2,21 +2,27 @@ package dev.catmaid.behavior.mode;
 
 import dev.catmaid.behavior.BehaviorMode;
 import dev.catmaid.behavior.Movement;
+import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
+import org.bukkit.DyeColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Sheep;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BlockVector;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 畜牧：捡拾地面产物、繁殖、剪毛、挤奶（蓝图 P6）。
@@ -60,19 +66,23 @@ public final class RanchMode implements BehaviorMode {
      * 玩家"扔给她"的东西躺在地上没人捡才更怪。
      */
     private static final int OWNER_GRACE_TICKS = 100;
+    /** 干完一件活说一句话的概率（与农业模式同口径：十次一句，不至于碎碎念）。 */
+    private static final double WORK_LINE_CHANCE = 0.1;
 
     private final FileConfiguration config;
+    private final AffectionManager affection;
     private final DialogueManager dialogue;
     private final Map<UUID, State> states = new HashMap<>();
 
-    public RanchMode(FileConfiguration config, DialogueManager dialogue) {
+    public RanchMode(FileConfiguration config, AffectionManager affection, DialogueManager dialogue) {
         this.config = config;
+        this.affection = affection;
         this.dialogue = dialogue;
     }
 
     /** 当前这一步要做什么。同一时刻只有一件事，避免导航目标互相打架。 */
     private enum Action {
-        PICKUP
+        PICKUP, SHEAR
     }
 
     /** 每只女仆的畜牧状态。Mode 是单例，状态必须按女仆分，否则十只会抢同一个目标。 */
@@ -221,12 +231,45 @@ public final class RanchMode implements BehaviorMode {
         // 扫描前顺手清过期拉黑（与扫描同频，不必另找时机）
         pruneBlacklist(state);
         Item item = nearestItem(maid, entity, radius(), state);
-        if (item == null) {
+        if (item != null) {
+            state.action = Action.PICKUP;
+            state.target = item;
+            state.lastPos = null;
             return;
         }
-        state.action = Action.PICKUP;
-        state.target = item;
+        if (selectShear(maid, entity, state)) {
+            return;
+        }
+    }
+
+    /** 找一只没剪过的成年羊。剪过的、幼崽都不是目标。 */
+    private boolean selectShear(Maid maid, LivingEntity entity, State state) {
+        Sheep best = null;
+        double bestSq = radiusSq();
+        Location from = entity.getLocation();
+        for (Entity candidate : entity.getWorld().getNearbyEntities(from, radius(), radius(), radius())) {
+            if (!(candidate instanceof Sheep sheep) || !sheep.isAdult() || sheep.isSheared()
+                    || blacklisted(state, sheep.getLocation())) {
+                continue;
+            }
+            double distance = sheep.getLocation().distanceSquared(from);
+            if (distance <= bestSq) {
+                bestSq = distance;
+                best = sheep;
+            }
+        }
+        if (best == null) {
+            return false;
+        }
+        state.action = Action.SHEAR;
+        state.target = best;
         state.lastPos = null;
+        return true;
+    }
+
+    private double radiusSq() {
+        double radius = radius();
+        return radius * radius;
     }
 
     /** 当前目标还成立吗。目标被主人牵走、被玩家捡走、羊已经被剪过，都要重新挑。 */
@@ -241,7 +284,10 @@ public final class RanchMode implements BehaviorMode {
         if (target instanceof Item item) {
             return collectible(item) && !blacklisted(state, item.getLocation());
         }
-        return true;
+        return switch (state.action) {
+            case SHEAR -> target instanceof Sheep sheep && sheep.isAdult() && !sheep.isSheared();
+            default -> true;
+        };
     }
 
     /** 朝目标走；到了就干活。 */
@@ -261,12 +307,50 @@ public final class RanchMode implements BehaviorMode {
         }
     }
 
+    /** 到了就干活。先把目标与动作取出来再 reset，免得收尾时把要用的实体清空。 */
     private void execute(Maid maid, State state) {
-        if (state.action == Action.PICKUP) {
-            collect(maid, (Item) state.target, state);
-        }
+        Entity target = state.target;
+        Action action = state.action;
         reset(state);
         state.nextActionAt = System.currentTimeMillis() + ACTION_COOLDOWN_MS;
+        switch (action) {
+            case PICKUP -> collect(maid, (Item) target, state);
+            case SHEAR -> shear(maid, (Sheep) target);
+        }
+    }
+
+    /**
+     * 剪羊毛：羊变裸，羊毛按羊的颜色进包（蓝图 P6）。
+     *
+     * <p>原版剪毛要玩家手持剪刀，这里不要求——女仆的"工具"就是她的手（主手拿什么她都不该把剪刀剪坏）。
+     * 掉落走 {@code getDrops} 那条路的等价做法：直接给对应颜色的羊毛，不经方块/实体掉落表。
+     */
+    private void shear(Maid maid, Sheep sheep) {
+        DyeColor color = sheep.getColor();
+        sheep.setSheared(true);
+        ItemStack wool = new ItemStack(woolOf(color));
+        int leftover = maid.inventory().addItem(wool);
+        if (leftover > 0) {
+            wool.setAmount(leftover);
+            sheep.getWorld().dropItemNaturally(sheep.getLocation(), wool);
+        }
+        sheep.getWorld().playSound(sheep.getLocation(), Sound.ENTITY_SHEEP_SHEAR, 1f, 1f);
+        maid.stats().addShear();
+        reward(maid);
+    }
+
+    /** 干完一件活：好感 + 统计（统计由调用方加），偶尔一句话（agent.md 第 10 节：心跳不能省）。 */
+    private void reward(Maid maid) {
+        affection.apply(maid, affection.gain(AffectionReason.WORK_BREED), AffectionReason.WORK_BREED);
+        if (ThreadLocalRandom.current().nextDouble() < WORK_LINE_CHANCE) {
+            dialogue.send(maid, "on_work_done");
+        }
+    }
+
+    /** DyeColor → 羊毛材质（LIGHT_BLUE → LIGHT_BLUE_WOOL）；取不到退回白羊毛，别让一次剪毛崩掉 tick。 */
+    private static Material woolOf(DyeColor color) {
+        Material wool = color == null ? null : Material.matchMaterial(color.name() + "_WOOL");
+        return wool == null ? Material.WHITE_WOOL : wool;
     }
 
     // ---- 卡死与拉黑 ----

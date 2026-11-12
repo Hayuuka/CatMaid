@@ -48,7 +48,7 @@ public final class BehaviorManager {
         // 主人不在线时 FollowMode 会把女仆交给 IdleMode，两者共用一个实例（它自己没有状态）
         modes.put(Maid.Mode.FOLLOW, new FollowMode(config, idle));
         modes.put(Maid.Mode.FARM, new FarmMode(config, affection, dialogue));
-        modes.put(Maid.Mode.RANCH, new RanchMode(config, dialogue));
+        modes.put(Maid.Mode.RANCH, new RanchMode(config, affection, dialogue));
     }
 
     /** 未实现的模式（COMBAT 属 P7）返回 null。 */
