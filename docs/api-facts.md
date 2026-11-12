@@ -2101,10 +2101,14 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 
 ## 23. Phase 8 交接（配置化 / 命令 / 收尾打磨，2026-11-12）
 
+> **收口状态（2026-11-12 22:42）：代码完成、服务端验收通过；客户端项未验证。**
+> 服主决定先收口（当时另发现若干冲突待处理），因此蓝图 P8 的四条最终验收里
+> **「新玩家全链路」「60 只女仆 TPS」两项保持未验证**，不得计入通过。测试服已停机。
+
 ### 23.1 阶段结论
 
-命令树、文案外置、配置补齐、名牌颜色四项全部落地并服务端实测；蓝图 P8 的最终验收
-**四项里两项已过（重启恢复、reload 生效），另两项（新玩家全链路、60 只 TPS）需要真人客户端在线**——
+命令树、文案外置、配置补齐、名牌颜色四项全部落地并**服务端**实测；蓝图 P8 的最终验收
+**四项里两项已过（重启恢复、reload 生效），另两项（新玩家全链路、60 只 TPS）客户端未验证**——
 无玩家时 Citizens 会把全部女仆 despawn（原因见 23.3-4），服务端测不出行为负载。
 
 构建与启动：`gradlew shadowJar` 通过；paper-26.2-62 启动 `ERROR|Exception` 计数 0
@@ -2178,8 +2182,24 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 | `admin reload` 生效 | ✅ | 容量 30→31→32 逐次生效，日志"小铃 背包容量 31 → 32"；未改数值时无输出（幂等） |
 | `admin remove` 批量清理 | ✅ | 58 只一次清完，提示改为"已送走 loadtest 名下的 58 只女仆"；DB 回到 3 只 |
 | 重启后状态恢复 | ✅ | 好感 60.0 / 模式 COMBAT / 铃铛态汐音 / 座位/装备均按库恢复，启动 0 ERROR |
-| 新玩家全链路（领魂符→召唤→喂食→农/牧/战→死亡→复活） | ⏳ 待客户端 | 各环节在 P4–P7 已分别客户端验过，本轮只补命令入口 |
-| 60 只女仆 TPS ≥ 19.5 | ⏳ 待客户端 | 见 23.3-4：无玩家时实体全被 despawn，测不出负载 |
+| 新玩家全链路（领魂符→召唤→喂食→农/牧/战→死亡→复活） | ⚠ 客户端未验证 | 各环节在 P4–P7 已分别客户端验过，P8 只补命令入口；整链一次跑通**没人跑过** |
+| 60 只女仆 TPS ≥ 19.5 | ⚠ 客户端未验证 | 见 23.3-4：无玩家时实体全被 despawn，测不出负载；测试服已停机 |
+
+> 上表"✅"仅代表**服务端**（控制台/RCON/数据库/日志）证据；标 ⚠ 的两项不得视为通过。
+> 玩家侧命令（gui/mode/sethome/info/rename/title/talisman）的 **happy path 也属于未验证**，
+> 本轮只验到"非玩家 sender 被拦住"这一侧。
+
+### 23.5.1 恢复验证时的最小清单（测试服重开后照此跑）
+
+1. 起服：`testserver` 下 `java -jar paper-26.2-62.jar nogui`；
+   资源包服：`testserver/plugins/BetterModel` 下 `python -m http.server 8123 --bind 0.0.0.0 --directory .`
+   （`server.properties` 的 `resource-pack` 是 `127.0.0.1`，客户端不在本机时要换成内网 IP）。
+2. 进服后依次：`/catmaid info` → `/catmaid mode 农业` → `/catmaid sethome` → `/catmaid gui` →
+   `/catmaid rename 新名字` → `/catmaid title 主人` → `/catmaid talisman` 连发两次（第二次应被冷却拦住）。
+3. 名牌颜色：`/catmaid admin setaffection b2aada7b-f57a-4e79-85af-d23a53898d94 85` → 名字应变红（羁绊档）。
+4. 全链路：领魂符 → 召唤 → 喂食 → 种田/打怪 → 打死 → 铃铛复活。
+5. 60 只：`max-per-player` 调 60、`global-maid-cap` 调 61 → `/catmaid admin reload` → 分 tick 召唤 →
+   站她身边看 `/tps` `/mspt`；测完 `admin remove <玩家>` 清理。
 
 ### 23.6 冲突处理记录（agent.md 第 9 节格式）
 
@@ -2220,3 +2240,8 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 - 好感度到「伙伴」档（默认 40）才能 `/catmaid rename` 与 `/catmaid title`。
 - 她倒下会变成铃铛进你背包，右键铃铛 + 材料（默认 1 颗钻石）就能唤醒；好感度会掉一截。
 - 60 只女仆同服时的 TPS 属服务器实测项，见 23.3-4 的测试流程。
+
+### 23.9 遗留（服主反馈，待补细节）
+
+服主在 P8 收口时反馈"发现一些冲突"，但为不阻塞进度先收口，细节尚未整理进本文档。
+下一位接手请先向服主确认冲突清单，再据实修订 23.3/23.4 或蓝图附录 A。

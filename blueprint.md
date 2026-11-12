@@ -961,14 +961,15 @@ combat:
 
 ## Phase 8 — 配置化 / 命令 / 收尾打磨
 
-> **状态：已完成（2026-11-12，服务端验收 2/4 通过，2 项待真人客户端）**。
+> **状态：代码完成 + 服务端验收 2/4；客户端项未验证（服主 2026-11-12 决定先收口）**。
 > 交接与踩坑见 `docs/api-facts.md` 第 23 节（**接手建议直接读 23.3、23.7**）。
 > 与本节的差异：`performance.behavior-tick-stagger` 只保留配置形状（错峰写在各 Mode 内部，读到 false 会告警）；
 > `/catmaid talisman` 的 24h 冷却记在内存（重启清零）；rename/title 门槛按"伙伴档"而非写死 40；
 > `/catmaid mode` 直接认 `messages.yml` 里的中文模式名（无代码内别名表）；另加了 `general.default-title`。
 > **两条升级必读**：① Paper 的 `reloadConfig()` 会换对象，reload 必须原地覆盖 config（否则"提示成功但行为没变"）；
 > ② `messages.yml` 只补缺键不改旧键，升级到 P8 要删一次 `plugins/CatMaid/messages.yml`，否则 `/catmaid` 帮助还是旧命令表。
-> **待客户端实测**：新玩家全链路、60 只女仆 TPS（无玩家在线时 Citizens 把女仆全 despawn，服务端测不出负载）。
+> **待客户端实测（未验证，不得视为通过）**：新玩家全链路、60 只女仆 TPS，
+> 以及玩家侧命令的 happy path（无玩家在线时 Citizens 把女仆全 despawn，服务端测不出负载）。
 
 **目标**：管理员工具齐全、全部数值可配、消息外置。
 
@@ -1004,11 +1005,11 @@ combat:
 > 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
 
 - [ ] 新玩家：领魂符 → 召唤 → 喂食涨好感 → 派去种田/放牧/打怪 → 死亡复活全流程无报错
-      （各环节 P4–P7 已分别客户端验过，P8 只补命令入口；整链一次跑通待客户端）
+      （**客户端未验证**：各环节 P4–P7 已分别验过，P8 只补命令入口，整链没跑；服主决定先收口）
 - [x] 服务器重启后所有状态（位置/模式/背包/好感度/坐下/存活）完整恢复
       （2026-11-12 22:43 实测：好感 60.0 / 模式 COMBAT / 铃铛态 / 装备均按库恢复，启动 0 ERROR）
 - [ ] 60 只女仆同服 TPS ≥ 19.5（行为错峰生效）
-      （无玩家在线时 Citizens 会把女仆全 despawn，行为 tick 空转——必须真人客户端在线测，流程见 api-facts 23.3-4）
+      （**客户端未验证**：无玩家时 Citizens 把女仆全 despawn，行为 tick 空转；流程见 api-facts 23.5.1）
 - [x] `/catmaid admin reload` 后配置与台词即时生效
       （实测：`affection.levels` 容量 30→31→32 逐次生效、未改数值时幂等；见 api-facts 23.5）
 
