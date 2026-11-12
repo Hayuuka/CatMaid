@@ -145,7 +145,11 @@ death:
   bell-glowing: true
 
 # ---- Phase 7 战斗模式 ----
+# 女仆主动索敌近战（远程见 ranged-*）。每 10 tick 决策一次，按 npcId 错峰。
 combat:
+  radius: 12              # 索敌半径：只找这个范围内的怪
+  lose-dist: 20           # 脱战距离：目标跑出这个范围就不再追
+  attack-interval-ticks: 20   # 两次出手的最小间隔。剑满蓄约 12.5 tick，20 对斧略欠
   # 女仆血量上限。玩家型 NPC 默认 20 血，不改上限她打不过两只僵尸；
   # 每次实体生成都会重设上限并回满（Citizens 重建实体会把这两样都丢掉）
   maid-max-health: 40

@@ -1,5 +1,6 @@
 package dev.catmaid.behavior;
 
+import dev.catmaid.behavior.mode.CombatMode;
 import dev.catmaid.behavior.mode.FarmMode;
 import dev.catmaid.behavior.mode.FollowMode;
 import dev.catmaid.behavior.mode.IdleMode;
@@ -46,14 +47,32 @@ public final class BehaviorManager {
         IdleMode idle = new IdleMode(config);
         modes.put(Maid.Mode.IDLE, idle);
         // 主人不在线时 FollowMode 会把女仆交给 IdleMode，两者共用一个实例（它自己没有状态）
-        modes.put(Maid.Mode.FOLLOW, new FollowMode(config, idle));
+        FollowMode follow = new FollowMode(config, idle);
+        modes.put(Maid.Mode.FOLLOW, follow);
         modes.put(Maid.Mode.FARM, new FarmMode(config, affection, dialogue));
         modes.put(Maid.Mode.RANCH, new RanchMode(config, affection, dialogue));
+        // 战斗模式的"脱战回主人"直接复用 follow 实例，别复制一份距离带逻辑（api-facts 20.10-3）
+        modes.put(Maid.Mode.COMBAT, new CombatMode(config, affection, dialogue, follow));
     }
 
-    /** 未实现的模式（COMBAT 属 P7）返回 null。 */
+    /** 未实现的模式返回 null（P7 起五个模式全齐，正常不会再走到 null）。 */
     public BehaviorMode get(Maid.Mode mode) {
         return modes.get(mode);
+    }
+
+    /**
+     * 主人/女仆挨打时锁定反击目标。转发给战斗模式，业务逻辑留在 Mode 里（agent.md 5.3）。
+     *
+     * <p>目标只在女仆当前是战斗模式时才有意义——别的模式下她不该突然冲出去打架。
+     */
+    public void lockCombatTarget(Maid maid, LivingEntity attacker) {
+        if (maid.getMode() != Maid.Mode.COMBAT) {
+            return;
+        }
+        BehaviorMode mode = modes.get(Maid.Mode.COMBAT);
+        if (mode instanceof CombatMode combat) {
+            combat.lockTarget(maid, attacker);
+        }
     }
 
     /** 每 tick 调一次：推进计数器后逐只女仆分发。 */
@@ -92,7 +111,7 @@ public final class BehaviorManager {
 
         BehaviorMode mode = modes.get(maid.getMode());
         if (mode == null) {
-            // 蓝图 P7 的战斗模式还没实现，先按跟随跑，免得切过去就变成木头人
+            // 配置里写错的模式不该把她变成木头人：退回跟随跑
             mode = modes.get(Maid.Mode.FOLLOW);
         }
         mode.tick(maid, tick);
