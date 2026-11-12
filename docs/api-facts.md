@@ -2,7 +2,7 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-11（Phase 4 收口）
+> 最后更新：2026-11-12（Phase 5 收口 + 窗口复核）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
@@ -11,6 +11,8 @@
 详见第 17 节；**接手请直接读 17.2、17.4、17.9，P4 开工前必读 17.11**）。
 **Phase 4 状态：已完成并收口**（蓝图验收 7/7，服务端 4 项 + 服主客户端 3 项；养成数值全部配置化。
 详见第 18 节，**接手 P5 前读 18.3 / 18.9 / 18.11**）。
+**Phase 5 状态：已完成并收口**（服务端验收 5/5，观感项待客户端；窗口复核 2 条冲突均保守解决，
+详见第 19 节，**接手 P6 前读 19.6、19.7 与 19.8**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -1485,3 +1487,33 @@ P4 收口状态：新增 9 个类 / 改 10 个文件；蓝图验收 7 项全部�
 
 P5 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 5 项服务端全通过、1 项观感待客户端。
 提交记录：`8de4fe7` → `2d71296` → `ad5c995` → 本次文档提交。
+
+### 19.8 P5 窗口复核（蓝图维护者，2026-11-12 晚）
+
+**javap 独立复核**（paper-api-26.2.build.135-stable.jar，与 19.3(1) 同源）：
+- `org.bukkit.block.Block#breakNaturally` 共 7 个重载（无参 / `(ItemStack)` / `(boolean)` /
+  `(boolean,boolean)` / `(ItemStack,boolean)` / `(ItemStack,boolean,boolean)` /
+  `(ItemStack,boolean,boolean,boolean)`），**全部返回 `boolean`**，无返回掉落列表的重载
+  —— 19.3(1) 与 19.6 的冲突记录属实。
+- `getDrops()` / `getDrops(ItemStack)` 返回 `Collection<ItemStack>`；`Particle.BLOCK`、
+  `Sound.BLOCK_CROP_BREAK` 均存在。采用方案用到的 API 全部成立。
+- `org.bukkit.util.BlockVector` 存在；`org.bukkit.util.BlockPos` **不存在**（javap 报
+  "找不到类"；`BlockPos` 实为 NMS `net.minecraft.core.BlockPos`，agent.md 1.2 禁用）。
+
+**窗口新增冲突 1 条**（编码侧原记在 19.4「有意差异 2」的拉黑表部分，按"蓝图引用了不可用 API"
+口径重分类为冲突）：
+
+```
+[CONFLICT] 蓝图位置: Phase 5「导航卡死（8s 内位移 < 0.5 格）→ 放弃该目标并拉黑 30s（Map<BlockPos, Long>）」
+现实情况: org.bukkit 中不存在 BlockPos（javap: 找不到类 org.bukkit.util.BlockPos）；
+          BlockPos 是 NMS 类 net.minecraft.core.BlockPos，按 agent.md 1.2 禁止 import
+采用方案: org.bukkit.util.BlockVector 作拉黑表键（javap 确认存在，等价的 Bukkit 值类型）
+理由: 蓝图此处是伪代码记法，照抄会违反禁 NMS 铁律，保守替换为等价类型
+```
+
+**复核结论**：19.4 其余各条有意差异核对属实且不构成冲突（行为与验收均与蓝图一致，sitting
+拦截由 BehaviorManager 统一处理后验收项"坐下不工作"实测通过）；P5 窗口口径冲突共 **2 条**
+（breakNaturally 签名 + BlockPos 类型名），均已保守解决——未动架构、未加依赖、未用反射。
+对后续阶段的唯一影响：**P6 勿再照抄蓝图 P5 伪代码中 `breakNaturally` 返回掉落列表的写法**
+（18.11 第 2 条已作废），捡拾/剪毛复用 19.7-4 的 `getDrops` + "目标 + 卡死 + 拉黑"三件套。
+blueprint.md 已同步：Phase 5 状态行补窗口复核注记、附录 A 新增 breakNaturally/BlockPos 风险行。

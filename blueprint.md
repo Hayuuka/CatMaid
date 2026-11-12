@@ -727,6 +727,9 @@ death:
 > 交接与踩坑见 `docs/api-facts.md` 第 19 节。与本节的差异：**`breakNaturally` 返回的是 boolean 不是
 > 掉落列表**，改 `getDrops(tool)` + 静默清空方块（19.6）；空目标时的待机台词复用 `tickIdle` 的闸门，
 > 不做"每 20 tick 掷 5%"；拉黑表按女仆存在 Mode 内、`onDisable` 清。
+> **窗口复核（2026-11-12 晚，维护者）**：javap 独立验证 breakNaturally 冲突属实；另确认 1 条冲突——
+> 本节拉黑表伪代码的 `Map<BlockPos, Long>` 引用了 NMS 类型（org.bukkit 无 `BlockPos`），实际实现用
+> `BlockVector`，勿照抄伪代码。P5 窗口冲突共 2 条，均保守解决（见 api-facts 19.8 与附录 A）。
 
 **目标**：女仆在 home（或自身）周围自动找成熟作物收割并补种，收成入女仆背包。
 
@@ -969,6 +972,7 @@ combat:
 | P4–P8 按「trait 每 tick 驱动」的直觉写周期逻辑 | **事实**[已实测]：见上一行——玩家型 NPC 的 `Trait#run()`/`navigator.run()` 永不被调用。**采用方案**：动画、导航、好感计时（P4 的 `FOLLOW_TICK` 等）等一切周期逻辑一律由插件调度器（`BehaviorManager.tickAll`，`CatMaidPlugin` 的 `runTaskTimer(…, 1L, 1L)`）统一推行；Mode/Listener 内的定时需求走 BehaviorManager 的 tick 计数，不挂 trait。**对后续影响**：任何"靠 trait 每 tick 驱动"的设计写法全部作废 |
 | 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
+| 蓝图 P5 伪代码 `block.breakNaturally(tool) // 返回 List<ItemStack>` | **事实**[已实测/JAR 复核]：Paper 26.2 的 `breakNaturally` 全部 7 个重载都返回 `boolean`（掉落直接掉进世界），没有返回掉落列表的重载；掉落列表只有 `getDrops(ItemStack) → Collection<ItemStack>`。**采用方案**（P5 已落码 `FarmMode#harvest`）：`getDrops(tool)` 算掉落 → `setType(AIR, false)` 静默清空 → 入包、满才 `dropItemNaturally`，并手动补收割音效/粒子。**对后续影响**：P6 剪毛/挤奶/捡拾勿照抄该伪代码（api-facts 18.11-2 已作废）；同段 `Map<BlockPos, Long>` 用 `BlockVector`（`BlockPos` 是 NMS 类型，agent.md 1.2 禁用） |
 | 东方模型资产 | TLM 素材 CC BY-NC-SA 4.0：非商用服可移植，须在服务器公告/关于页署名 TartaricAcid 与 TLM 项目并以相同协议共享改编物；或用 Blockbench 自制。模型文件放 `plugins/BetterModel/models/`，属部署资产不进代码仓库 |
 | NPC 被其他插件清理 | MaidManager.restoreNpcs() 每次 onEnable 兜底重建 |
 | 女仆模型缺 `idle`/`walk`/`sit` 动画 → 对应姿态「卡住不动」且服务端零报错 | **部署前置条件**[已实测]：女仆 bbmodel 必须自带 `idle`/`walk`/`sit` 三条动画，缺一条对应姿态的表现就是"卡住不动"（`Tracker.animate` 找不到名字时静默返回 false，服务端一路"成功"）。缺动画用 `tools/bbmodel_anim.py` 按骨骼名注入；注入时手臂必须写 ±13° 的 bind 倾斜，不能写 0。P4 受击/死亡、P7 攻击动画同理——先补资产再写代码 |
