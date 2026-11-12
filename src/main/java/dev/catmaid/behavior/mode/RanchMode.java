@@ -79,6 +79,14 @@ public final class RanchMode implements BehaviorMode {
     private static final int OWNER_GRACE_TICKS = 100;
     /** 干完一件活说一句话的概率（与农业模式同口径：十次一句，不至于碎碎念）。 */
     private static final double WORK_LINE_CHANCE = 0.1;
+    /**
+     * 喂一口让它求偶多久（蓝图 P6 的 600 tick = 30 秒）。
+     *
+     * <p>必须走 {@code Animals#setLoveModeTicks}：Paper 26.2 的 {@code Breedable#setBreed(boolean)}
+     * 改的是**年龄**（true→setAge(0)、false→setAge(6000) 变成幼崽），跟求偶没关系，
+     * 照 api-facts 19.9-2 的旧建议写会「喂了小麦却没有红心」（冲突记录见 20.x）。
+     */
+    private static final int LOVE_TICKS = 600;
 
     private final FileConfiguration config;
     private final AffectionManager affection;
@@ -191,8 +199,9 @@ public final class RanchMode implements BehaviorMode {
             return false;
         }
         if (leftover > 0) {
-            // 部分进包：余量留在原地等她腾出空位
+            // 部分进包：余量留在原地等她腾出空位。getItemStack 是副本，必须写回去才生效
             stack.setAmount(leftover);
+            item.setItemStack(stack);
         } else {
             item.remove();
         }
@@ -290,8 +299,10 @@ public final class RanchMode implements BehaviorMode {
         Location from = entity.getLocation();
         Map<EntityType, List<Animals>> groups = new EnumMap<>(EntityType.class);
         for (Entity candidate : entity.getWorld().getNearbyEntities(from, radius(), radius(), radius())) {
+            // isLoveMode() 必须单独判：canBreed() 只看年龄，已经在求偶的动物能被反复喂（白扣饲料）
             if (!(candidate instanceof Animals animal) || !animal.isAdult() || !animal.canBreed()
-                    || animal.isDead() || (animal instanceof Tameable tamed && tamed.isTamed())
+                    || animal.isLoveMode() || animal.isDead()
+                    || (animal instanceof Tameable tamed && tamed.isTamed())
                     || blacklisted(state, animal.getLocation())) {
                 continue;
             }
@@ -472,7 +483,8 @@ public final class RanchMode implements BehaviorMode {
             return collectible(item) && !blacklisted(state, item.getLocation());
         }
         return switch (state.action) {
-            case BREED -> target instanceof Animals animal && animal.isAdult() && animal.canBreed();
+            case BREED -> target instanceof Animals animal && animal.isAdult() && animal.canBreed()
+                    && !animal.isLoveMode();
             case SHEAR -> target instanceof Sheep sheep && sheep.isAdult() && !sheep.isSheared();
             case MILK -> target instanceof Cow cow && cow.isAdult();
             default -> true;
@@ -553,7 +565,7 @@ public final class RanchMode implements BehaviorMode {
         if (food == null || !maid.inventory().consumeOne(food)) {
             return false;
         }
-        animal.setBreed(true);
+        animal.setLoveModeTicks(LOVE_TICKS);
         animal.getWorld().playSound(animal.getLocation(), Sound.ENTITY_GENERIC_EAT, 1f, 1f);
         return true;
     }
