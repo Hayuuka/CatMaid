@@ -794,9 +794,14 @@ farm:
 
 ## Phase 6 — 畜牧模式
 
-> **状态：已完成（2026-11-12）**。服务端链路实测通过（捡拾鸡蛋入包、红羊剪出红羊毛、空桶换奶桶、
-> 两只成年牛各喂 1 份小麦后双双求偶并生出小牛）。`on_work_done`/`on_no_food` 台词与"玩家刚丢的
-> 物品不抢"待真人客户端。交接与冲突见 `docs/api-facts.md` 第 20 节。
+> **状态：已验收通过（2026-11-12，服务端 + 客户端）**。四条链路服务端实测通过（捡拾鸡蛋入包、红羊剪出
+> 红羊毛、空桶换奶桶、两只成年牛各喂 1 份小麦后双双求偶并生出小牛）；`on_work_done`/`on_no_food` 台词
+> 与"玩家刚丢的物品不抢"由服主客户端确认（api-facts 20.8）。
+> **与本节的重大差异**：`animals.setLoveMode(600)` 与备选的 `Breedable#setBreed(boolean)` **都不能用来求偶**
+> ——后者改的是年龄（false 会把成年动物变成幼崽）；真正的入口是 `Animals#setLoveModeTicks(int)`，
+> 且 `canBreed()` 只判年龄、必须额外加 `!isLoveMode()` 才不会被反复喂。其余差异：捡拾拆成
+> "脚下 10 tick 直收 + 远处 30 tick 走一趟"、繁殖分两趟各喂一只、饲料不足 2 份不动手、
+> 跳过已驯服的动物（详见 20.4）。交接与修正建议见 `docs/api-facts.md` 第 20 节。
 > **与本节的重大差异**：`animals.setLoveMode(600)` 与备选的 `Breedable#setBreed(boolean)` **都不能用来求偶**
 > ——后者改的是年龄（false 会把成年动物变成幼崽）；真正的入口是 `Animals#setLoveModeTicks(int)`，
 > 且 `canBreed()` 只判年龄、必须额外加 `!isLoveMode()` 才不会被反复喂。其余差异：捡拾拆成
@@ -856,6 +861,11 @@ ranch:
 ---
 
 ## Phase 7 — 战斗模式
+
+> **开工前必读**：`docs/api-facts.md` 20.9（给本节伪代码的 5 条修正建议）与 20.10（P7 开工清单）。
+> 其中三条会直接写出错代码或返工：①`entity.attack()` 在玩家型 NPC 上受**攻击冷却**影响，要判
+> `getCooledAttackStrength`；②`Attribute.MAX_HEALTH` 必须配合 `setHealth`，且每次实体重建都要重设；
+> ③"战斗模式挨打是否仍扣好感"这一口径待裁决（现状是所有伤害都扣，与 `WORK_KILL +0.2` 相抵）。
 
 **目标**：主动索敌近战/弓箭，保护主人，受击反击，武器取自主手。
 
@@ -982,6 +992,9 @@ combat:
 | 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
 | 蓝图 P6「`animals.setLoveMode(600)`」→ 备选「`Breedable#setBreed(true)`」 | **事实**[P6 实测 + 字节码复核]：`Animals#setLoveMode` 在 26.2 不存在；`Breedable#setBreed(boolean)` 的实现是 `setAge(0)` / `setAge(6000)`，改的是**年龄**，`setBreed(false)` 会把成年动物变成幼崽；`canBreed()` 也只看 `getAge()==0`。**采用方案**（P6 已落码 `RanchMode#feed`）：`Animals#setLoveModeTicks(600)` 才是真求偶入口，筛选/校验再加 `!isLoveMode()` 防止重复喂（api-facts 20.3、20.6） |
+| 蓝图 P7 `entity.attack(target)` 默认满伤害 | **事实**[JAR 已核]：`LivingEntity#attack(Entity)` 存在，但女仆是玩家型 NPC，走 `ServerPlayer.attack`，伤害受**攻击冷却**（attack strength）影响；`Player` 只有 `getCooledAttackStrength(float)`/`getCooldownPeriod()`/`resetCooldown()`，**没有灌满强度的 setter**。**采用方案**（待 P7 落码）：攻击前判 `getCooledAttackStrength(0.5f) >= 0.9f`，否则等下一轮；`attack-interval-ticks: 20` 对剑够、对斧（0.8–1.0 攻速）略欠。**对后续影响**：好感伤害加成的 15% 差异会被攻强噪声淹没，验收时必须固定攻强（api-facts 20.9-A4） |
+| 蓝图 P7 只设 `MAX_HEALTH` 的 baseValue | **事实**[JAR 已核 + 常规行为]：①只改上限不改当前血量会留下"20/40"的血条；②Citizens 每次 spawn 重建实体，onEnable 设一次会在 despawn/重生成后失效。**采用方案**（待 P7 落码）：每次实体 ready（attach/spawn 回调）都 `setBaseValue(max)` + `setHealth(max)`；常量名是 `Attribute.MAX_HEALTH`（无 `GENERIC_` 前缀） |
+| 战斗模式下女仆挨打仍按 P4 扣好感 | **事实**[现状]：`MaidDamageListener.onHurt` 对所有伤害无差别扣 `affection.loss.hurt`（5 秒冷却）。P7 上线后"带她打怪"= 每次挨打 -0.5，与击杀奖励 +0.2 相抵，等于惩罚玩家用战斗模式。**采用方案**：**待产品裁决**——建议"战斗模式受击不扣好感（或减半），非战斗模式照旧"，裁决后在 P7 落码（api-facts 20.9-B5） |
 | 蓝图 P5 伪代码 `block.breakNaturally(tool) // 返回 List<ItemStack>` | **事实**[已实测/JAR 复核]：Paper 26.2 的 `breakNaturally` 全部 7 个重载都返回 `boolean`（掉落直接掉进世界），没有返回掉落列表的重载；掉落列表只有 `getDrops(ItemStack) → Collection<ItemStack>`。**采用方案**（P5 已落码 `FarmMode#harvest`）：`getDrops(tool)` 算掉落 → `setType(AIR, false)` 静默清空 → 入包、满才 `dropItemNaturally`，并手动补收割音效/粒子。**对后续影响**：P6 剪毛/挤奶/捡拾勿照抄该伪代码（api-facts 18.11-2 已作废）；同段 `Map<BlockPos, Long>` 用 `BlockVector`（`BlockPos` 是 NMS 类型，agent.md 1.2 禁用） |
 | 东方模型资产 | TLM 素材 CC BY-NC-SA 4.0：非商用服可移植，须在服务器公告/关于页署名 TartaricAcid 与 TLM 项目并以相同协议共享改编物；或用 Blockbench 自制。模型文件放 `plugins/BetterModel/models/`，属部署资产不进代码仓库 |
 | NPC 被其他插件清理 | MaidManager.restoreNpcs() 每次 onEnable 兜底重建 |

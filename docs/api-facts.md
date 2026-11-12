@@ -1595,8 +1595,8 @@ P5 收口提交 `4685951`（已推送）。P6 从这一版开分支/直推 `main
 **代码落地，四条链路全部服务端实测通过**：捡拾地面产物（鸡蛋入包）、剪毛（红羊→红羊毛、羊变裸）、
 挤奶（空桶→奶桶）、繁殖（两只成年牛各喂 1 份小麦 → 双双求偶 → 生出小牛、父母进 5 分钟冷却）。
 坐下不干活、目标失效重选、8 秒卡死拉黑 30 秒沿用 P5 的三件套。
-**需真人客户端确认的只剩观感**：`on_work_done` / `on_no_food` 台词（主人不在线时台词是静默丢弃的，
-服务端无法自证）、以及"玩家刚丢的物品不抢"这条（要真人在她脚边丢东西）。
+**客户端已验收通过**（2026-11-12 20:35–20:41，服主实测，见 20.8）：四条链路 + 缺饲料台词 + 坐下停手
+全部通过，本轮"待客户端"的项已全部关闭。P6 收口。
 
 ### 20.2 新增 / 改动文件
 
@@ -1659,8 +1659,8 @@ setBreed(false) → setAge(6000)    // 变成幼崽（!!）
 | 有毛羊被剪 → 羊毛入女仆背包（颜色正确），羊变裸 | **✅ 通过（服务端）** | `data get entity … Sheared` = `1b`；背包 slot 11 = `red_wool x1`（召唤时 `{Color:14}` 红羊） |
 | 空桶 → 牛奶桶转换正确 | **✅ 通过（服务端）** | 背包 slot 8/10 = `milk_bucket`；`maid_stats.milks` 7 → 9；桶被扣光后不再尝试 |
 | 地上鸡蛋/羊毛自动拾取入背包 | **✅ 通过（服务端）** | 召唤 2 个蛋 20 秒内消失，背包 slot 9 = `egg x2`；`@e[type=item]` 为空 |
-| 玩家刚丢的物品 10 tick 内不抢 | **待客户端** | 需要真人脚边丢东西；代码按 `getTicksLived()<=10` 不碰、带 owner 的再宽限到 100 tick，见 20.7-3 |
-| 饲料耗尽时不再尝试繁殖（有台词提示一次） | **部分通过** | 清空小麦后：2 头成年牛 30 秒内 `InLove` 恒为 0、`breeds` 不涨、挤奶照常工作；"只说一次"的闸门实测为 true（探针），**台词本身待客户端** |
+| 玩家刚丢的物品 10 tick 内不抢 | **✅ 通过（客户端）** | 代码按 `getTicksLived()<=10` 不碰、带 owner 的再宽限到 100 tick（20.7-3）；服主实测通过 |
+| 饲料耗尽时不再尝试繁殖（有台词提示一次） | **✅ 通过（客户端）** | 服务端侧：清空小麦后 2 头成年牛 30 秒内 `InLove` 恒为 0、`breeds` 不涨、挤奶照常；台词由服主客户端确认 |
 
 最终一轮（干净包、无探针）账目完全对得上：`breeds 14→15`、`shears 1→2`、`milks 7→9`、
 小麦 20 → 18（正好一次繁殖 = 2 份）、好感 34.0 → 34.4（4 次动作 × 0.1）、背包新增
@@ -1699,6 +1699,181 @@ setBreed(false) → setAge(6000)    // 变成幼崽（!!）
 5. **无玩家在线时 Citizens 仍会在约 1 分钟后 despawn**（18.3-4），自动化验收一律"先 `/npc spawn` 立刻测"；
    本轮 `@e[type=player]` 查不到玩家型 NPC，定位女仆用她头顶的 TextDisplay（`@e[type=text_display]`）。
 
-P6 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 4 项服务端全通过、1 项部分通过（台词待客户端）、
-1 项待客户端。提交记录：`bb4714f`（捡拾）→ `98dc3cb`（剪毛）→ `6fa1638`（挤奶）→ `d35029a`（繁殖）
+P6 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 6 项全部通过（4 项服务端 + 2 项客户端）。提交记录：`bb4714f`（捡拾）→ `98dc3cb`（剪毛）→ `6fa1638`（挤奶）→ `d35029a`（繁殖）
 → `4655a8c`（缺料提示）→ 修复求偶 API → 本次文档提交。
+
+### 20.8 P6 客户端验收记录（2026-11-12 20:35–20:41）
+
+服主用 `Hayuuka`（女仆 owner）进服，在测试牧场按 20.5 的场景逐项过了一遍，**回报 P6 通过**。
+本轮因此关闭了此前两处"待客户端"：
+
+| 项 | 结论 |
+|---|---|
+| `on_no_food` 台词（饲料耗尽只念一次） | ✅ 通过 |
+| `on_work_done` 台词（干完一件活 10% 概率） | ✅ 通过 |
+| 玩家刚丢的物品不抢 | ✅ 通过 |
+| 剪毛/挤奶/繁殖/捡拾的观感（走动姿态、红心、羊变裸） | ✅ 通过 |
+
+**现场搭建方式已固化，可随时重建**（P7 及以后回归也用这套）：
+
+```bash
+# 石台 13x13 + 围栏 + 4 盏海晶灯（避开农田，别踩 P5 的耕地）
+python tools/rcon.py "fill 28 70 8 40 70 20 minecraft:stone" \
+  "fill 28 71 8 40 74 20 minecraft:air" \
+  "fill 28 71 8 40 71 8 minecraft:stone_bricks" \
+  "fill 28 71 20 40 71 20 minecraft:stone_bricks" \
+  "fill 28 71 9 28 71 19 minecraft:stone_bricks" \
+  "fill 40 71 9 40 71 19 minecraft:stone_bricks" \
+  "setblock 34 71 8 minecraft:air" "setblock 35 71 8 minecraft:air" \
+  "setworldspawn 34 71 10" "gamerule doMobSpawning false"
+# 动物 + 补给箱（箱子里 64 小麦/3 桶/剪刀/16 蛋）
+python tools/rcon.py "summon cow 31 71 12" "summon cow 36 71 16" \
+  'summon sheep 32 71 17 {Color:14}' "setblock 29 71 19 minecraft:chest" \
+  "item replace block 29 71 19 container.0 with minecraft:wheat 64"
+```
+
+**演示要点（下次给别人演示照做）**：先把她设成 `sitting=1` 再开服——否则玩家进服前的几十秒里
+她就会把两头牛喂进 5 分钟冷却，繁殖演示直接看不到。玩家进服后点「坐/站」放开她，再自己把小麦
+shift-click 进背包，时序才由人掌控。
+
+### 20.9 给蓝图修正窗口的报告（P6 收口时提，2026-11-12）
+
+> 下面每条都标了"建议改法"。**P7 章节本身没有动过**——按 agent.md 第 9 节，蓝图正文由维护窗口改，
+> 这里只交事实与建议。优先级 A = 照抄会写出错代码，B = 口径不清会引发返工，C = 可读性。
+
+**A1｜Phase 6 `animals.setLoveMode(600)` 必须整句替换**
+- 现状：该 API 在 26.2 不存在（P0 已记）；19.9-2 给的备选 `Breedable#setBreed(true)` **同样是错的**
+  ——字节码显示它是 `setAge(0)` / `setAge(6000)`。
+- 建议：改成 `animal.setLoveModeTicks(600)`（`Animals#setLoveModeTicks(int)`），并在伪代码旁注
+  "本方法在 26.2 存在，但 `setBreed` 会改年龄、`setBreed(false)` 会把成年动物变幼崽，禁用"。
+
+**A2｜Phase 6 繁殖伪代码缺少"已经在求偶的不要重复喂"**
+- 现状：`canBreed()` 只判 `getAge()==0`，不判求偶。只按它筛选时同一对会被反复投喂
+  （实测 2 分钟空扣 27 份小麦）。
+- 建议：筛选条件补 `&& !animal.isLoveMode()`，并在蓝图里写明原因。
+
+**A3｜Phase 6 捡拾判定的字段名要改，并补 owner 规则**
+- 现状：写的是 `age > 10 tick`。真实字段是 `Entity#getTicksLived()`；另外 `Item` 还有
+  `getPickupDelay()` / `canMobPickup()` / `getOwner()`。
+- 建议："`getPickupDelay() <= 0 && getTicksLived() > 10 && canMobPickup()`；带 owner 的（玩家亲手丢的）
+  再宽限 100 tick（5 秒），否则等于永远不捡主人扔给她的东西"。
+
+**A4｜Phase 7 `entity.attack(target)` 需要补"攻击强度"这一层**
+- 现状：`LivingEntity#attack(Entity)` 在 26.2 存在（[JAR] 已核），但女仆是**玩家型 NPC**，
+  走的是 `ServerPlayer.attack`，伤害受攻击冷却（attackStrengthTicker）影响；`Player` 上只有
+  `getCooledAttackStrength(float)` / `getCooldownPeriod()` / `resetCooldown()`，**没有能直接灌满的 setter**
+  （`resetCooldown()` 是清零，反而让下一刀更弱）。
+- 建议：伪代码的攻击分支加一句 `if (maidEntity.getCooledAttackStrength(0.5f) < 0.9f) 跳过本轮（等下一 tick）`，
+  并注明"剑满蓄约 12.5 tick、斧 20–25 tick，`attack-interval-ticks: 20` 对斧略欠"。
+
+**A5｜Phase 7 女仆血量两处坑**
+- 现状：只写了 `getAttribute(MAX_HEALTH).setBaseValue(40)`。① 只改上限不改当前血量，会出现"20/40"；
+  ② Citizens 每次 spawn 都会重建实体，只在 onEnable 设一次会在 despawn/重生成后失效。
+- 建议：改成"每次实体 ready（attach/spawn 回调）后 `setBaseValue(max)` + `setHealth(max)`；
+  常量名是 `Attribute.MAX_HEALTH`（不是 `GENERIC_MAX_HEALTH`）"。
+
+**B1｜Phase 6 验收项"饲料耗尽有台词提示一次"要标注可测边界**
+- 建议：补一句"主人不在线时台词静默丢弃，服务端只能验行为（牛不进求偶、`breeds` 不涨）；台词需真人"。
+
+**B2｜Phase 6「玩家刚丢的物品 10 tick 内不抢」的口径**
+- 10 tick 在服务端几乎测不出来（一个决策周期就 30 tick）。建议直接按 A3 的"10 tick + owner 宽限 5 秒"表述，
+  并把验收项改写为"玩家亲手丢出的物品，落地 5 秒后才会被捡"。
+
+**B3｜Phase 5/6 伪代码要显式标注"伪代码，方法名不做保证"**
+- 连续两个阶段各踩一处（`breakNaturally` 返回值、`setLoveMode`/`setBreed`）。建议在蓝图开头
+  第 1 节加一句总则："所有代码块是流程示意，落地前必须 javap 核对"。
+
+**B4｜Phase 7 伪代码里 `if (sitting) return` 与 P3 的全局拦截重复**
+- 建议删掉，改注"坐姿由 BehaviorManager 统一硬拦截（P3），各 Mode 不用自己判"——P5/P6 都是这么做的。
+
+**B5｜Phase 7 缺"索敌排除项"与"女仆被打是否扣好感"**
+- 索敌要排除 Citizens NPC 与其他女仆：建议写进伪代码注释。
+- 更要紧的产品问题：`MaidDamageListener.onHurt` 对**所有**伤害扣好感（5 秒冷却）。P7 一上线，
+  带她打怪 = 每次挨打 -0.5 好感，与 `WORK_KILL +0.2` 互相抵消。**这条需要蓝图窗口裁决**：
+  建议"+战斗模式受击不扣好感（或减半），非战斗模式照旧"，见 20.10-5.3。
+
+**C1｜Phase 6 配置段注释**："`breed-food` 只覆盖特例，没写的动物由 `Animals#isBreedItem` 判定"——
+已按此实现（实际只配了 4 种），建议蓝图补这句，省得以后有人把 7 种动物全配一遍。
+
+**已确认无需改**：Phase 6 的五条验收项、`ranch` 配置键名、动作冷却 2 秒、8 秒卡死 + 30 秒拉黑、
+"染色羊毛按 `DyeColor` 取材质"——实现与蓝图一致，实测通过。
+
+### 20.10 P7（战斗模式）开工清单
+
+**必读**：20.7-4（状态机四件套）、20.9 的 A4/A5/B5（P7 三条硬坑）、19.9-6（RCON 验收套路）。
+基线：P6 收口提交（见本节末）。
+
+#### 1. 落点
+新建 `behavior/mode/CombatMode implements BehaviorMode`，`BehaviorManager` 构造里
+`modes.put(Maid.Mode.COMBAT, new CombatMode(config, affection, dialogue, follow))`；
+接上后 `BehaviorManager.tick` 里的降级 fallback（`mode == null → FOLLOW`）可以整段删掉，
+五个模式全齐。`pulse()` 里战斗模式**不要**加 `tickIdle`（打架时碎碎念很吵，同 FARM/RANCH）。
+
+#### 2. API 核对结果（[JAR] paper-api 26.2.build.135，已核）
+| 蓝图用法 | 结论 |
+|---|---|
+| `LivingEntity#attack(Entity)` | ✅ 存在（void）；受攻击冷却影响，见 A4 |
+| `LivingEntity#swingMainHand()` | ✅ 存在（客户端可见性另说，见 5.3） |
+| `LivingEntity#hasLineOfSight(Entity)` | ✅ 存在 |
+| `World#spawnArrow(Location, Vector, float, float)` | ✅ 存在，返回 `Arrow` |
+| `Arrow#setDamage/setShooter` | ✅ 在 `AbstractArrow` 上（`getDamage/setDamage`）+ `Projectile#setShooter` |
+| `AbstractArrow#setPickupStatus(PickupStatus)` | ✅ 存在——**建议设 `CREATIVE_ONLY`**，否则玩家能捡走她的箭 |
+| `Attribute.MAX_HEALTH` / `ATTACK_DAMAGE` / `ATTACK_SPEED` | ✅ 存在（**没有** `GENERIC_` 前缀了） |
+| `Monster` | ✅ 存在（`Creature` + `Enemy`） |
+| `EntityDamageByEntityEvent#getDamager()` | ✅ 存在 |
+| `Player#getCooledAttackStrength(float)` / `resetCooldown()` | ✅ 存在；**没有** `getAttackCooldown()`，也没有灌满强度的 setter |
+| `npc.setProtected(false)` | ✅ `MaidManager` 第 194/289 行已经在用，女仆可受击（P4 死亡链路已验） |
+
+#### 3. 现成能力（别重造）
+- `Movement.navigate/stop/isNavigating/arrived`；姿态由 BehaviorManager 自动给 WALK/STAND；
+- **`FollowMode` 实例**已由 BehaviorManager 持有：脱战时"缓步跟随主人"建议直接复用它
+  （`friend.tick(maid, tick)`），别复制一份距离带逻辑；它内部还带跨世界 3 秒延迟；
+- `affection.damageBonus(level)`：蓝图验收项"好感 60+ 打得痛 +15%"直接用它，数值在 `affection.levels[].damage-bonus`；
+- `maid.stats().addKill()` + `affection.apply(maid, affection.gain(AffectionReason.WORK_KILL), WORK_KILL)` + `dialogue.send(maid, "on_work_done")`；
+- `MaidDamageListener` 已有受击/死亡链路——**P7 只需在同一事件里"锁定反击目标"，不要另建监听器**；
+- `maid.inventory().getMainHand()` 就是她手上的武器（`applyEquipment` 已同步到实体）；
+- `State` 四件套（目标 + 8 秒卡死 + 30 秒拉黑 + 动作冷却）直接照抄 `RanchMode`。
+
+#### 4. 需要新写的
+- `CombatMode`：索敌（`getNearbyEntities(..., Monster.class)`，排除 `CitizensAPI.getNPCRegistry().isNPC(e)`、
+  排除其他女仆实体、排除已死/隐身）、近战追击、远程放箭、脱战回主人；
+- `OwnerProtectionListener`：主人被打 → 该玩家名下**战斗模式**的女仆锁定 attacker；
+  女仆被打 → 战斗模式下锁定 attacker。只做"写 target"这一件事，业务在 CombatMode 里；
+- 伤害加成：`EntityDamageByEntityEvent` 里 damager 是女仆实体时 `setDamage(damage * (1 + bonus))`；
+  同一事件里顺手判 `kill`（或用 `EntityDeathEvent#getKiller`）；
+- `config.yml` 新增 `combat` 段（radius 12 / lose-dist 20 / attack-interval-ticks 20 / ranged-enabled /
+  ranged-range 15 / arrow-damage 5.0 / maid-max-health 40 / protect-owner）；
+- 女仆血量：给 `MaidManager` 的 attach/spawn 回调加"设 MAX_HEALTH + setHealth"（见 A5），别只在 onEnable。
+
+#### 5. 踩坑预告
+1. **攻强衰减**（A4）：不判 `getCooledAttackStrength` 的话，20 tick 一刀在斧头上只有 ~80% 伤害，
+   而且"好感 0 vs 60"的 15% 差异会被这层噪声淹掉，验收项会时过时不过。
+2. **血量上限与当前血量要一起设**，且每次实体重建都要重设（A5）。否则表现为"她只有 20 血"或"血条 20/40"。
+3. **带她打架会掉好感**（B5，需先裁决）：`MaidDamageListener.onHurt` 目前无差别扣 0.5（5 秒冷却）。
+   建议 P7 动这个之前先定口径，别让"战斗模式"变成"惩罚模式"。
+4. **玩家型 NPC 的 `attack()` 会消耗主手耐久**（走真实玩家逻辑）：铁剑打十几只僵尸就报销。
+   这是设计取舍，但要在 P8 文档里告诉玩家（或给她配"不毁坏"的武器）。
+5. **挥剑动作大概率看不见**：BetterModel 盖住原版实体渲染，`swingMainHand` 只有原版手臂动画。
+   P3 的 `tools/bbmodel_anim.py` 能往模型里注动画——P7 验收时先确认有没有 `attack` 动画可挂。
+6. **弓箭的初速**：蓝图给 speed 2.0（原版满蓄力约 3.0），15 格外下坠明显；`spread` 是角度（度），
+   6f 已经比较散，调试时先调这两项，别怀疑命中判定。
+7. **怪物会主动打女仆**（她是 ServerPlayer，仇恨正常），所以"她挨打 → 反击"这条天然成立，
+   但要防止"她被两只僵尸夹在中间反复反击到死"——`lose-dist` 与血量上限就是为这个设的。
+8. **无玩家在线时 Citizens 会 despawn**（18.3-4）：自动化验收一律"`/npc spawn` 后立刻测"。
+
+#### 6. 验收准备（服务端可自动化）
+```bash
+# 场地：沿用 20.8 的石台（28..40 / 8..20 / y71）
+python tools/rcon.py "summon zombie 34 71 12"
+python tools/rcon.py "npc spawn 23"
+# 她的主手武器：DB 里 slot 0 放钻石剑（blob 做法见 19.3-3），或 GUI 装备页 shift-click
+# 看怪掉血：连续两刀之间的 Health 差
+python tools/rcon.py 'data get entity @e[type=zombie,x=34,y=71,z=14,distance=..12,limit=1] Health'
+# 好感加成对照：先 0 好感打一刀记伤害，再把 maids.affection 改成 60 重启打一刀对比
+```
+蓝图 P7 六项验收对照：①主动迎敌击杀 ②弓保持距离且有伤害归属 ③好感加成可测
+④打主人/打女仆都会被反击 ⑤脱战回主人 ⑥HP 归零走铃铛流程。
+
+#### 7. 基线
+P6 收口提交见本节末（`git log --oneline -1`）。开发前先 `git pull`——P6 期间蓝图与 api-facts 都改过。
+唯一强约束：**别照抄蓝图 P5/P6/P7 伪代码里的方法名**，三次里已经错了三次。
