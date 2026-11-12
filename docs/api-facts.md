@@ -2,7 +2,7 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-12（Phase 5 收口 + 窗口复核 + P6 开工清单 19.9）
+> 最后更新：2026-11-12（P6 收口 + 蓝图修正窗口：20.9 的 A/B 类已落进 blueprint，19.9-2 setBreed 备选已删）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
@@ -1533,10 +1533,10 @@ blueprint.md 已同步：Phase 5 状态行补窗口复核注记、附录 A 新�
 > 改的是**年龄**（true→`setAge(0)`、false→`setAge(6000)` 变幼崽），与求偶无关；正确入口是
 > `Animals#setLoveModeTicks(int)`。另外 `canBreed()` 只判 `getAge()==0`，不判求偶状态。
 > 详情与实测证据见第 20.3 / 20.6 节，**本条已作废，勿照抄**。
-- **`animals.setLoveMode(600)` 不存在了。** 26.2 的 `Animals` 提供
-  `boolean isLoveMode()` / `int getLoveModeTicks()` / `void setLoveModeTicks(int)`；
-  更贴合"让它进入求偶"的语义的是 `Breedable#setBreed(boolean)`（`Breedable extends Ageable`，
-  `canBreed()` 是闸门）。建议：`setBreed(true)` + 用 `setLoveModeTicks(600)` 只在需要控时长时用。
+- **`animals.setLoveMode(600)` 不存在了。** 26.2 的 `Animals` 提供的是
+  `boolean isLoveMode()` / `int getLoveModeTicks()` / `void setLoveModeTicks(int)`，求偶入口只有
+  `setLoveModeTicks(600)`。（**维护窗口修订 2026-11-12**：原建议的 `Breedable#setBreed(boolean)`
+  已删除——它改的是年龄，true→`setAge(0)`、false→`setAge(6000)` 变幼崽，与求偶无关，禁用。）
 - **捡拾判定的字段名要换**：蓝图写 `age>10tick`，实际是 `Entity#getTicksLived() > 10`；
   再叠加 `Item#getPickupDelay() <= 0`、`Item#canMobPickup()`。**外加 `Item#getOwner()`**：
   玩家刚丢的东西 owner 就是那个玩家，别去抢（蓝图"10 tick 内不抢"的意图其实是这条）。

@@ -2,6 +2,7 @@
 
 > **阅读对象**：负责编码的 AI（DeepSeek）。本文档是唯一事实来源（Single Source of Truth）。
 > 你必须先通读本文档和 `agent.md`，再开始写代码。所有类名、方法签名、数据结构以本文档为准；与实际 API 冲突时按 `agent.md` 第 9 节"冲突处理协议"执行。
+> **伪代码总则**：本文所有代码块均为流程示意，**方法名与签名不做保证**——落地前必须以 javap 对照依赖 jar 核对（P5/P6 连续各踩一处：`breakNaturally` 返回值、`setLoveMode`/`setBreed` 不存在或语义不符）。
 
 ## 0. 项目总览
 
@@ -608,7 +609,7 @@ public final class AffectionManager {
 | 完成一次繁殖/剪毛/挤奶 | WORK_BREED | +0.1 |
 | 击杀一只敌怪 | WORK_KILL | +0.2 |
 | 跟随状态下每 5 分钟 | FOLLOW_TICK | +0.5 |
-| 女仆受击 | HURT | -0.5 |
+| 女仆受击 | HURT | -0.5（**战斗模式下不扣**——P7 窗口裁决，见 Phase 7「受击扣好感的口径」） |
 | 女仆死亡 | DEATH | -20（80+ 减半） |
 | 复活 | REVIVE | 0（死亡已扣） |
 
@@ -802,11 +803,6 @@ farm:
 > 且 `canBreed()` 只判年龄、必须额外加 `!isLoveMode()` 才不会被反复喂。其余差异：捡拾拆成
 > "脚下 10 tick 直收 + 远处 30 tick 走一趟"、繁殖分两趟各喂一只、饲料不足 2 份不动手、
 > 跳过已驯服的动物（详见 20.4）。交接与修正建议见 `docs/api-facts.md` 第 20 节。
-> **与本节的重大差异**：`animals.setLoveMode(600)` 与备选的 `Breedable#setBreed(boolean)` **都不能用来求偶**
-> ——后者改的是年龄（false 会把成年动物变成幼崽）；真正的入口是 `Animals#setLoveModeTicks(int)`，
-> 且 `canBreed()` 只判年龄、必须额外加 `!isLoveMode()` 才不会被反复喂。其余差异：捡拾拆成
-> "脚下 10 tick 直收 + 远处 30 tick 走一趟"、繁殖分两趟各喂一只、饲料不足 2 份不动手、
-> 跳过已驯服的动物（详见 20.4）。
 
 **目标**：自动繁殖配对、剪羊毛、挤牛奶、捡拾地面产物（鸡蛋/羊毛/掉落物）。
 
@@ -815,19 +811,26 @@ farm:
 ```java
 // 每女仆状态：Entity currentTarget; String actionType;
 tick:
-  if (sitting) return
-  // 1. 优先捡拾：半径 config.ranch.radius 内 Item 实体（pickupDelay<=0 且 age>10tick）
+  // 坐姿由 BehaviorManager 统一硬拦截（P3），Mode 内不判 sitting
+  // 1. 优先捡拾：半径 config.ranch.radius 内 Item 实体，条件（[已实测] Item 没有 age 字段）：
+  //    getPickupDelay() <= 0 && getTicksLived() > 10 && canMobPickup()
   //    → maid.addItem() 并 remove；满则跳过
+  //    带 owner 的（玩家亲手丢的）宽限 100 tick（5 秒）再捡——不宽限等于永远不捡主人扔给她的东西
   // 2. 决策（每 30 tick）：
   //    a) 繁殖：收集半径内 Animals 按类型分组；对每种
-  //       若成年对数 >= 2 且 maid 背包有对应饲料 → 选最近一对，target=第二只, action=BREED
+  //       若成年对数 >= 2 且 !animal.isLoveMode() 且 maid 背包有对应饲料
+  //       → 选最近一对，target=第二只, action=BREED
+  //       [已实测] canBreed() 只判 getAge()==0、不判求偶；不补 !isLoveMode() 会被反复投喂
+  //       （实测 2 分钟空扣 27 份小麦）
   //    b) 剪毛：最近 Sheep isSheared()==false → action=SHEAR
   //    c) 挤奶：最近 Cow 且背包有空桶 → action=MILK
   //    优先级：BREED > SHEAR > MILK（config 可调顺序）
   // 3. 执行：
   //    dist > 2.0 → navigateTo(目标)；导航卡死处理同 Farm
   //    到达 → 执行动作：
-  //      BREED: 两只都 animals.setLoveMode(600)；consume 饲料×1（一只一份）；
+  //      BREED: 两只都 animal.setLoveModeTicks(600)   // [已实测] 26.2 无 setLoveMode(600)；
+  //             // ⚠ Breedable#setBreed 禁用：它改的是年龄，setBreed(false) 会把成年动物变幼崽
+  //             consume 饲料×1（一只一份）；
   //             stats.breeds++; affection WORK_BREED
   //      SHEAR: sheep.setSheared(true); addItem(new ItemStack(Material.WHITE_WOOL 或
   //             sheep.getColor() 对应羊毛)); stats.shears++; affection WORK_BREED
@@ -845,7 +848,7 @@ ranch:
   radius: 8
   pickup: true
   action-priority: [ BREED, SHEAR, MILK ]
-  breed-food:
+  breed-food:            # 只覆盖特例；没写的动物由 Animals#isBreedItem 判定，不必配全 7 种
     COW: WHEAT; SHEEP: WHEAT; PIG: CARROT; CHICKEN: WHEAT_SEEDS
 ```
 
@@ -855,17 +858,17 @@ ranch:
 - [ ] 两只成年牛 + 女仆背包有小麦 → 走近、消耗小麦、双红心进入繁殖
 - [ ] 有毛羊被剪 → 羊毛入女仆背包（颜色正确），羊变裸
 - [ ] 空桶 → 牛奶桶转换正确
-- [ ] 地上鸡蛋/羊毛自动拾取入背包；玩家刚丢的物品 10 tick 内不抢
-- [ ] 饲料耗尽时不再尝试繁殖（有台词提示一次）
+- [ ] 地上鸡蛋/羊毛自动拾取入背包；玩家**亲手丢出**的物品落地 5 秒内不抢（owner 宽限 100 tick；纯 10 tick 不足一个决策周期，服务端测不出来）
+- [ ] 饲料耗尽时不再尝试繁殖（有台词提示一次）。可测边界：主人不在线时台词静默丢弃，服务端只能验行为（牛不进求偶、`breeds` 不涨）；台词需真人客户端
 
 ---
 
 ## Phase 7 — 战斗模式
 
-> **开工前必读**：`docs/api-facts.md` 20.9（给本节伪代码的 5 条修正建议）与 20.10（P7 开工清单）。
-> 其中三条会直接写出错代码或返工：①`entity.attack()` 在玩家型 NPC 上受**攻击冷却**影响，要判
-> `getCooledAttackStrength`；②`Attribute.MAX_HEALTH` 必须配合 `setHealth`，且每次实体重建都要重设；
-> ③"战斗模式挨打是否仍扣好感"这一口径待裁决（现状是所有伤害都扣，与 `WORK_KILL +0.2` 相抵）。
+> **开工前必读**：`docs/api-facts.md` 20.9 与 20.10（P7 开工清单）。
+> 本节伪代码已按 20.9 修正（A4 攻击冷却强度判定 / A5 血量两坑 / B4 坐姿交全局拦截 / B5 索敌排除项）；
+> ③"战斗模式挨打是否扣好感"**已由蓝图窗口裁决（2026-11-12）：战斗模式受击不扣好感**，
+> 见下方「受击扣好感的口径」。
 
 **目标**：主动索敌近战/弓箭，保护主人，受击反击，武器取自主手。
 
@@ -874,11 +877,12 @@ ranch:
 ```java
 // 每女仆状态：LivingEntity target; int attackCooldown;
 tick:
-  if (sitting) return
+  // 坐姿由 BehaviorManager 统一硬拦截（P3），Mode 内不判 sitting
   // 目标维护：
   if (target == null || target.dead || dist(maid,target) > config.combat.lose-dist(20))
       target = nearestHostile(maid.entity.location, config.combat.radius(12))
-               // world.getNearbyEntities → Monster 且非 Citizens NPC 自身/其他女仆
+               // world.getNearbyEntities → Monster；排除项：CitizensAPI.getNPCRegistry().isNPC(e)
+               // （NPC 自身与其他女仆实体）、已死、隐身
   if (target == null): 缓步跟随主人（复用 FollowMode 距离逻辑，standby 距离 4）→ return
 
   weapon = maid.inventory.getMainHand()
@@ -896,10 +900,16 @@ tick:
       else:
           clearNavigation; 面向 target
           if (attackCooldown <= 0):
+              // [JAR] 玩家型 NPC 走 ServerPlayer.attack，伤害受攻击冷却（attackStrengthTicker）影响；
+              // Player 上没有灌满强度的 setter（resetCooldown() 是清零、反而让下一刀更弱）。
+              // 不判强度的话 20t 一刀在斧头上只有 ~80% 伤害，"好感 0 vs 60"的 15% 差异
+              // 会被这层噪声淹没、验收时过时不过：
+              if (entity.getCooledAttackStrength(0.5f) < 0.9f) → 跳过本轮，等下一 tick
               entity.attack(target)          // Paper API，伤害含主手武器与攻击属性
               // 伤害加成：监听 EntityDamageByEntityEvent，damager==女仆实体 →
               //   setDamage(damage * (1 + affectionManager.damageBonus(level)))
-              entity.swingMainHand(); attackCooldown = weaponCd(剑默认 20t)
+              entity.swingMainHand(); attackCooldown = weaponCd(剑默认 20t；斧满蓄 20-25t，
+              //   attack-interval-ticks: 20 对斧略欠)
   if (target.dead): stats.kills++; affection WORK_KILL; 概率 on_work_done; target=null
 ```
 
@@ -912,7 +922,9 @@ tick:
     // victim 是女仆实体 → 战斗模式下 attacker LivingEntity → 反击锁定
 ```
 
-**女仆生命值**：NPC 实体为 Player 类型，`setProtected(false)` 后可受击。onEnable 恢复时设置 `getAttribute(MAX_HEALTH).setBaseValue(config.combat.maid-max-health 40)`。Phase 4 的死亡逻辑自动生效。
+**女仆生命值**：NPC 实体为 Player 类型，`setProtected(false)` 后可受击。**不能只在 onEnable 设一次**（[已实测] Citizens 每次 spawn 都会重建实体，despawn/重生成后失效）：在 `MaidManager` 的 attach/spawn 实体重建回调里执行 `getAttribute(Attribute.MAX_HEALTH).setBaseValue(max)` **并随后 `setHealth(max)`**——只改上限不改当前血量会出现"20/40"血条；常量是 `Attribute.MAX_HEALTH`（26.2 已无 `GENERIC_` 前缀）。Phase 4 的死亡逻辑自动生效。
+
+**受击扣好感的口径**（蓝图窗口裁决，2026-11-12）：`MaidDamageListener.onHurt` 现状对一切伤害扣 0.5（5 秒冷却），与 `WORK_KILL +0.2` 相抵——带她打怪会越打越疏远，与"战斗是她在护主"的体验相悖。**裁决：战斗模式下受击不扣好感（挨打是履行职责）；非战斗模式照旧扣**（主人让她白白挨打，心疼是设计意图）。P7 在同一事件里顺带锁定反击目标，不要另建监听器。
 
 ### 配置
 ```yaml
