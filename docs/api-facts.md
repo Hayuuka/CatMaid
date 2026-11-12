@@ -1529,6 +1529,10 @@ blueprint.md 已同步：Phase 5 状态行补窗口复核注记、附录 A 新�
 接上后降级 fallback 里只剩 `COMBAT`（P7）。
 
 #### 2. 蓝图 P6 伪代码与实际 API 的偏差（[JAR] 已核，写代码前先改口径）
+> **修订（2026-11-12 晚，P6 实装后）**：下面第 1 条的"替代建议"选错了 API——`Breedable#setBreed(boolean)`
+> 改的是**年龄**（true→`setAge(0)`、false→`setAge(6000)` 变幼崽），与求偶无关；正确入口是
+> `Animals#setLoveModeTicks(int)`。另外 `canBreed()` 只判 `getAge()==0`，不判求偶状态。
+> 详情与实测证据见第 20.3 / 20.6 节，**本条已作废，勿照抄**。
 - **`animals.setLoveMode(600)` 不存在了。** 26.2 的 `Animals` 提供
   `boolean isLoveMode()` / `int getLoveModeTicks()` / `void setLoveModeTicks(int)`；
   更贴合"让它进入求偶"的语义的是 `Breedable#setBreed(boolean)`（`Breedable extends Ageable`，
@@ -1583,3 +1587,118 @@ python tools/rcon.py "npc spawn 25"
 #### 7. 基线
 P5 收口提交 `4685951`（已推送）。P6 从这一版开分支/直推 `main` 都行，唯一的强约束是
 **别再照抄蓝图 P5/P6 伪代码里的 API 写法**——两份伪代码各有一处已经和 26.2 不一致了。
+
+## 20. Phase 6 交接（畜牧模式，2026-11-12）
+
+### 20.1 阶段结论
+
+**代码落地，四条链路全部服务端实测通过**：捡拾地面产物（鸡蛋入包）、剪毛（红羊→红羊毛、羊变裸）、
+挤奶（空桶→奶桶）、繁殖（两只成年牛各喂 1 份小麦 → 双双求偶 → 生出小牛、父母进 5 分钟冷却）。
+坐下不干活、目标失效重选、8 秒卡死拉黑 30 秒沿用 P5 的三件套。
+**需真人客户端确认的只剩观感**：`on_work_done` / `on_no_food` 台词（主人不在线时台词是静默丢弃的，
+服务端无法自证）、以及"玩家刚丢的物品不抢"这条（要真人在她脚边丢东西）。
+
+### 20.2 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `behavior/mode/RanchMode`（新） | 捡拾 + 繁殖 + 剪毛 + 挤奶；per-maid 状态机（目标 / 8 秒卡死 / 30 秒拉黑 / 2 秒动作冷却） |
+| `behavior/BehaviorManager` | 注册 `Maid.Mode.RANCH`；降级 fallback 只剩 `COMBAT`（P7） |
+| `resources/config.yml` | 新增 `ranch` 段（`radius` / `pickup` / `action-priority` / `breed-food`） |
+| `resources/dialogue.yml` | 新增 `on_no_food` |
+
+### 20.3 实测新增的 API 行为事实
+
+**(1) ⚠ `Breedable#setBreed(boolean)` 改的是年龄，不是求偶。** [JAR/CraftBukkit 字节码已核]
+`CraftAgeable#setBreed` 的实现是：
+```
+setBreed(true)  → setAge(0)       // 变回成年
+setBreed(false) → setAge(6000)    // 变成幼崽（!!）
+```
+跟"进入求偶"毫无关系。真正的求偶入口是 `Animals#setLoveModeTicks(int)` →
+`Animal#setInLoveTime(int)`（只写 `inLove` 字段），读回用 `Animals#getLoveModeTicks()` / `isLoveMode()`。
+**api-facts 19.9-2 里"更贴合语义的是 setBreed"这条建议作废**，见 20.6。
+
+**(2) `Breedable#canBreed()` 只看年龄。** [JAR 已核] `CraftAgeable#canBreed()` 就是 `getAge() == 0`，
+**不判是否已在求偶**。只按它筛选会导致"同一对动物被反复喂小麦、每 30 tick 扣一次饲料"（本轮实测踩到：
+2 分钟扣了 27 份小麦，其中 3 份是重复喂同一只）。所以筛选与目标校验都必须额外加 `!animal.isLoveMode()`。
+
+**(3) 求偶状态的生命周期**：手工 `data merge entity <牛> {InLove:600}` 能写进去且不会被 tick 重置；
+喂完两只后原版会立刻判定繁殖 → **求偶值当场归零、父母 `Age` 置 6000 进入冷却**。
+所以"查 InLove 是不是 600"必须赶在繁殖发生前（本轮用"父母 Age 变成 5xxx + 附近出现 `Age:-2xxxx` 的小牛"
+来验收更稳）。幼崽与冷却中的父母都会被 `canBreed()` 自动排除。
+
+**(4) 捡拾判定的真实字段**：`Item#getPickupDelay()`、`Item#getTicksLived()`、`Item#canMobPickup()`、
+`Item#getOwner()` 全部存在 [JAR]；蓝图写的 `age>10tick` 对应 `getTicksLived()`。
+`Item#getItemStack()` 返回的是**副本**，改数量后必须 `setItemStack(...)` 写回，否则地上那堆数量不变。
+
+**(5) 挤奶没有任何 API 帮忙**：`Cow` 上没有 milk 方法（javap 已核）。空桶换奶桶只能自己算：
+`consumeOne(BUCKET)` → `addItem(MILK_BUCKET)` → `Sound.ENTITY_COW_MILK`。
+
+**(6) 剪羊毛的颜色**：`Sheep#getColor()` → `DyeColor` → `Material.matchMaterial(color.name() + "_WOOL")`
+（`LIGHT_BLUE` → `LIGHT_BLUE_WOOL` 成立）。`ENTITY_SHEEP_SHEAR`/`ENTITY_COW_MILK`/`ENTITY_GENERIC_EAT`
+音效与 `Particle.HEART` 均存在 [JAR]。
+
+### 20.4 与蓝图的有意差异
+
+1. **捡拾拆成两档节奏**（api-facts 19.9-5.1 的建议）：脚下 2.5 格内每 10 tick 直接收（不导航，
+   免得把"走去喂牛"的目标顶掉）；半径 8 格内更远的东西交给 30 tick 的决策走一趟。
+2. **繁殖分两趟喂**（蓝图是一步喂两只）：先喂近的一只、再走去它对象那儿喂第二只，
+   两只都点上求偶才结算好感与统计；中途对象被牵走就白喂一次、不给奖励（原版同样白喂）。
+3. **饲料必须够 2 份**才开喂（蓝图"一只一份"的推论）；只有 1 份时不动手，免得喂一只空一只。
+4. **跳过已驯服的动物**：不替别人家的狗/猫配种（蓝图没写，产品判断：别碰主人以外的财产）。
+5. **拉黑表与动作冷却放在 `State` 字段里**（蓝图写 `Map<UUID, Long>`）：per-maid 状态本来就按女仆存，
+   再挂一张 UUID 表等于同一件事存两遍。
+6. **`ranch.action-priority` 里写错的词直接跳过**，不让一个笔误把整个模式变成木头人。
+
+### 20.5 验收结果（服务端实测 2026-11-12 20:09–20:26）
+
+| 蓝图验收项 | 结果 | 依据 |
+|---|---|---|
+| 两只成年牛 + 小麦 → 走近、消耗小麦、双红心进入繁殖 | **✅ 通过（服务端）** | 20:23:15/16 两条喂食探针日志 `love=600`（探针验收后已删）；随即附近出现 `Age:-23269` 小牛，两头父母 `Age=5268`（6000 冷却中） |
+| 有毛羊被剪 → 羊毛入女仆背包（颜色正确），羊变裸 | **✅ 通过（服务端）** | `data get entity … Sheared` = `1b`；背包 slot 11 = `red_wool x1`（召唤时 `{Color:14}` 红羊） |
+| 空桶 → 牛奶桶转换正确 | **✅ 通过（服务端）** | 背包 slot 8/10 = `milk_bucket`；`maid_stats.milks` 7 → 9；桶被扣光后不再尝试 |
+| 地上鸡蛋/羊毛自动拾取入背包 | **✅ 通过（服务端）** | 召唤 2 个蛋 20 秒内消失，背包 slot 9 = `egg x2`；`@e[type=item]` 为空 |
+| 玩家刚丢的物品 10 tick 内不抢 | **待客户端** | 需要真人脚边丢东西；代码按 `getTicksLived()<=10` 不碰、带 owner 的再宽限到 100 tick，见 20.7-3 |
+| 饲料耗尽时不再尝试繁殖（有台词提示一次） | **部分通过** | 清空小麦后：2 头成年牛 30 秒内 `InLove` 恒为 0、`breeds` 不涨、挤奶照常工作；"只说一次"的闸门实测为 true（探针），**台词本身待客户端** |
+
+最终一轮（干净包、无探针）账目完全对得上：`breeds 14→15`、`shears 1→2`、`milks 7→9`、
+小麦 20 → 18（正好一次繁殖 = 2 份）、好感 34.0 → 34.4（4 次动作 × 0.1）、背包新增
+`milk_bucket x2` / `egg x2` / `red_wool x1`。
+
+编译与启动：`gradlew shadowJar` 通过；paper-26.2-62 启动无 ERROR（唯一 WARN 仍是既有的
+`resource-pack-id missing`）。探针（每 4 秒一条的决策探针 + 每条喂食日志）在验收后已全部删除并重新打包，
+最终包复跑一轮确认四条链路仍正常。
+
+### 20.6 冲突处理记录（agent.md 第 9 节格式）
+
+```
+[CONFLICT] 蓝图位置: Phase 6「BREED: 两只都 animals.setLoveMode(600)」（经 api-facts 19.9-2 转述为 Breedable#setBreed）
+现实情况: Paper 26.2 的 Breedable#setBreed(boolean) 实现是 setAge(0)/setAge(6000)（改年龄、false 还会变幼崽），
+          与求偶无关；真正的入口是 Animals#setLoveModeTicks(int) → Animal#setInLoveTime(int)。
+          且 canBreed() 只判 getAge()==0，不判求偶状态，按它筛选会重复喂同一只。
+采用方案: 喂食用 animal.setLoveModeTicks(600)；筛选与目标校验额外加 !animal.isLoveMode()
+理由: 只有这条路径能真的让动物进求偶并触发原版繁殖；照 setBreed 写会「喂了小麦却没有红心」
+```
+
+`Animals#setLoveMode` 这个蓝图方法本身在 26.2 已不存在（P0 已记为不存在，19.9-2 的替代建议又选错了 API）。
+
+### 20.7 已知限制 / P7 接手要点
+
+1. **`on_no_food` 只提醒一次**，且只有"确实有可繁殖的一对、但饲料不足 2 份"时才提醒；
+   补给到位（再次成功选中）后闸门复位。台词走 `dialogue.yml`，主人不在线时静默丢弃——
+   排障时以"牛是否进求偶"为准，别以"有没有说话"为准。
+2. **挤奶没有每日上限**：一头牛可以反复挤（原版也是这样），所以背包里有多少空桶就能产多少奶桶。
+   蓝图未要求限流，本轮不加。
+3. **捡拾的 owner 宽限是 100 tick（5 秒）**：蓝图只写"10 tick 内不抢"，但玩家亲手丢出的物品带 owner，
+   逐帧判定等于永远不捡主人扔给她的东西。现在的口径是：出生 10 tick 内一律不碰；
+   带 owner 的再等 5 秒；无主掉落（鸡蛋/羊毛/怪物掉落）10 tick 后就能捡。
+4. **P7 可复用的**：`State` 的"目标 + 卡死 + 拉黑 + 动作冷却"四件套、`stillValid` 的目标失效重挑、
+   `count(Maid, Material)`、`hearts(Entity)` 这类小工具；战斗索敌同样只许写在 Mode 的节流 tick 里
+   （agent.md 7.4）。**别再用 `setBreed`**，也别假设 `canBreed()` 会帮你过滤求偶中的动物。
+5. **无玩家在线时 Citizens 仍会在约 1 分钟后 despawn**（18.3-4），自动化验收一律"先 `/npc spawn` 立刻测"；
+   本轮 `@e[type=player]` 查不到玩家型 NPC，定位女仆用她头顶的 TextDisplay（`@e[type=text_display]`）。
+
+P6 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 4 项服务端全通过、1 项部分通过（台词待客户端）、
+1 项待客户端。提交记录：`bb4714f`（捡拾）→ `98dc3cb`（剪毛）→ `6fa1638`（挤奶）→ `d35029a`（繁殖）
+→ `4655a8c`（缺料提示）→ 修复求偶 API → 本次文档提交。

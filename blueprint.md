@@ -794,6 +794,15 @@ farm:
 
 ## Phase 6 — 畜牧模式
 
+> **状态：已完成（2026-11-12）**。服务端链路实测通过（捡拾鸡蛋入包、红羊剪出红羊毛、空桶换奶桶、
+> 两只成年牛各喂 1 份小麦后双双求偶并生出小牛）。`on_work_done`/`on_no_food` 台词与"玩家刚丢的
+> 物品不抢"待真人客户端。交接与冲突见 `docs/api-facts.md` 第 20 节。
+> **与本节的重大差异**：`animals.setLoveMode(600)` 与备选的 `Breedable#setBreed(boolean)` **都不能用来求偶**
+> ——后者改的是年龄（false 会把成年动物变成幼崽）；真正的入口是 `Animals#setLoveModeTicks(int)`，
+> 且 `canBreed()` 只判年龄、必须额外加 `!isLoveMode()` 才不会被反复喂。其余差异：捡拾拆成
+> "脚下 10 tick 直收 + 远处 30 tick 走一趟"、繁殖分两趟各喂一只、饲料不足 2 份不动手、
+> 跳过已驯服的动物（详见 20.4）。
+
 **目标**：自动繁殖配对、剪羊毛、挤牛奶、捡拾地面产物（鸡蛋/羊毛/掉落物）。
 
 ### RanchMode.tick（每 30 tick 决策一次，错峰）
@@ -972,6 +981,7 @@ combat:
 | P4–P8 按「trait 每 tick 驱动」的直觉写周期逻辑 | **事实**[已实测]：见上一行——玩家型 NPC 的 `Trait#run()`/`navigator.run()` 永不被调用。**采用方案**：动画、导航、好感计时（P4 的 `FOLLOW_TICK` 等）等一切周期逻辑一律由插件调度器（`BehaviorManager.tickAll`，`CatMaidPlugin` 的 `runTaskTimer(…, 1L, 1L)`）统一推行；Mode/Listener 内的定时需求走 BehaviorManager 的 tick 计数，不挂 trait。**对后续影响**：任何"靠 trait 每 tick 驱动"的设计写法全部作废 |
 | 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
+| 蓝图 P6「`animals.setLoveMode(600)`」→ 备选「`Breedable#setBreed(true)`」 | **事实**[P6 实测 + 字节码复核]：`Animals#setLoveMode` 在 26.2 不存在；`Breedable#setBreed(boolean)` 的实现是 `setAge(0)` / `setAge(6000)`，改的是**年龄**，`setBreed(false)` 会把成年动物变成幼崽；`canBreed()` 也只看 `getAge()==0`。**采用方案**（P6 已落码 `RanchMode#feed`）：`Animals#setLoveModeTicks(600)` 才是真求偶入口，筛选/校验再加 `!isLoveMode()` 防止重复喂（api-facts 20.3、20.6） |
 | 蓝图 P5 伪代码 `block.breakNaturally(tool) // 返回 List<ItemStack>` | **事实**[已实测/JAR 复核]：Paper 26.2 的 `breakNaturally` 全部 7 个重载都返回 `boolean`（掉落直接掉进世界），没有返回掉落列表的重载；掉落列表只有 `getDrops(ItemStack) → Collection<ItemStack>`。**采用方案**（P5 已落码 `FarmMode#harvest`）：`getDrops(tool)` 算掉落 → `setType(AIR, false)` 静默清空 → 入包、满才 `dropItemNaturally`，并手动补收割音效/粒子。**对后续影响**：P6 剪毛/挤奶/捡拾勿照抄该伪代码（api-facts 18.11-2 已作废）；同段 `Map<BlockPos, Long>` 用 `BlockVector`（`BlockPos` 是 NMS 类型，agent.md 1.2 禁用） |
 | 东方模型资产 | TLM 素材 CC BY-NC-SA 4.0：非商用服可移植，须在服务器公告/关于页署名 TartaricAcid 与 TLM 项目并以相同协议共享改编物；或用 Blockbench 自制。模型文件放 `plugins/BetterModel/models/`，属部署资产不进代码仓库 |
 | NPC 被其他插件清理 | MaidManager.restoreNpcs() 每次 onEnable 兜底重建 |
