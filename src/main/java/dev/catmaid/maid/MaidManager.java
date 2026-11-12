@@ -250,7 +250,12 @@ public final class MaidManager {
             return false;
         }
         NPC npc = maid.npc();
-        if (npc != null && npc.isSpawned()) {
+        if (npc == null) {
+            // 没有 NPC 就没有"放出来"的那一半：宁可拒绝收纳，也不要让她永久卡在魂符里
+            logger.warning("女仆 " + maid.getName() + " 的 NPC 已丢失，无法收纳");
+            return false;
+        }
+        if (npc.isSpawned()) {
             npc.despawn();
         }
         maid.setStored(true);

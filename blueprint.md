@@ -13,21 +13,22 @@
 | 插件名 | CatMaid（中文：猫娘女仆） |
 | 服务器 | Paper **26.2**，Java **25** |
 | 实现方式 | **纯插件**。禁止 mod、禁止要求玩家客户端安装任何东西 |
-| 玩家侧 | 强制接受服务器资源包（已有，无需处理下发逻辑） |
-| 依赖插件 | Citizens2（硬依赖）、BetterModel（硬依赖，模型渲染）、CraftEngine（软依赖，仅共存不调用其 API） |
+| 玩家侧 | 强制资源包，链路二选一：原版 `resource-pack` 或 CraftEngine 分发（`dependency.provider`，P9 引入；P10 修复"进服两次下载"） |
+| 依赖插件 | Citizens2（硬依赖）、BetterModel（硬依赖，模型渲染）、CraftEngine（**可选 API 依赖**：`provider=craftengine` 时提供凭证物品与单包分发；vanilla 模式零耦合。P9 引入，agent.md 1.4 口径以本蓝图为准） |
 | 服务器性质 | 非商用免费服 |
 | 体验核心 | **"养了一只属于自己的猫娘女仆"**——主人绑定、好感度养成、台词互动。所有设计决策优先服务这一点 |
 
 ### 0.2 需求范围
 
-**做**：女仆实体（东方模型）、战斗模式、农业模式、畜牧模式、背包/装备管理 GUI、好感度养成、台词系统、死亡/复活。
-**不做**：装备在模型上可见（明确排除）、AI 聊天、饰品、P 点祭坛、小游戏。
+**做**：女仆实体（东方模型）、战斗模式、农业模式、畜牧模式、背包/装备管理 GUI、好感度养成、台词系统、死亡/复活、魂符收纳女仆（P9）、主副手物品模型可见（P9——原"不做"项由服主 2026-11-12 需求反转）、依赖模式配置（P9）。
+**不做**：**盔甲**在模型上可见（仍排除——模型自带外观）、AI 聊天、饰品、P 点祭坛、小游戏。
 
 ### 0.3 架构图（文字版）
 
 ```
 CatMaid 插件（自研）
  ├─ 领域层   Maid / MaidManager / MaidTrait(Citizens Trait, 纯数据标记) / ModelAnimator(三姿态动画状态机)
+ │           / NameTagManager(名牌) / HandItemDisplays(主副手物品显示, P9)
  ├─ 行为层   BehaviorManager → Idle/Follow/Combat/Farm/Ranch 五个 BehaviorMode
  │           （tick 由 CatMaidPlugin 全局调度器每 tick 推行——玩家型 NPC 的 Trait#run()
  │             永不会被 Citizens 调用 [已实测]，见附录 A）
@@ -39,7 +40,7 @@ CatMaid 插件（自研）
  Citizens2   → 玩家型NPC、Navigator 寻路、NPCRightClickEvent
  BetterModel → ModelTrait 挂 bbmodel 模型 + 动画（双包分离：模型包走原版 resource-pack 强制下发；
              动画由服务端逐帧驱动、不进资源包——改 bbmodel/调动画只需重启，不必重发包，见附录 A）
- CraftEngine → 无代码耦合，仅资源包层面共存（Phase 0 验证）
+ CraftEngine → 可选（P9 provider）：craftengine 模式提供凭证物品构造与单包分发；vanilla 模式零耦合
 ```
 
 ### 0.4 项目构建配置（照抄即可）
@@ -99,7 +100,7 @@ softdepend: [CraftEngine]
 commands:
   catmaid:
     description: 猫娘女仆主命令
-    aliases: [maid, 猫娘]
+    # P10-10.1：不设 aliases（别名会派生 /catmaid:女仆 这类命名空间前缀），唯一入口 /catmaid
 permissions:
   catmaid.use:
     description: 普通玩家权限（召唤/管理自己的女仆）
@@ -169,6 +170,7 @@ CREATE TABLE IF NOT EXISTS maids (
   npc_id      INTEGER,                      -- Citizens NPC id，可能为 NULL
   home_world  TEXT, home_x REAL, home_y REAL, home_z REAL,
   sitting     INTEGER NOT NULL DEFAULT 0,
+  stored      INTEGER NOT NULL DEFAULT 0,   -- 收纳态（P9 新增；启动时 ALTER TABLE 幂等迁移）
   created_at  INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS maid_items (
@@ -970,6 +972,8 @@ combat:
 > ② `messages.yml` 只补缺键不改旧键，升级到 P8 要删一次 `plugins/CatMaid/messages.yml`，否则 `/catmaid` 帮助还是旧命令表。
 > **待客户端实测（未验证，不得视为通过）**：新玩家全链路、60 只女仆 TPS，
 > 以及玩家侧命令的 happy path（无玩家在线时 Citizens 把女仆全 despawn，服务端测不出负载）。
+> 服主收口时反馈的"若干冲突"（api-facts 23.9 遗留）已整理为 **P9（新增）/ P10（修复）** 两章，
+> P8 挂起项的回归并进 P10-10.5。
 
 **目标**：管理员工具齐全、全部数值可配、消息外置。
 
@@ -1015,6 +1019,175 @@ combat:
 
 ---
 
+## Phase 9 — 体验扩展：手部物品显示 / 魂符收纳 / 依赖模式
+
+> **状态：代码完成 + 服务端验收 3/5；客户端项未验证（2026-11-12 收口）**（2026-11-12 服主提出 7 条需求，
+> 蓝图维护窗口设计定稿：1/2/6 归本章新增，3/4/5/7 归 P10 修复）。
+> **交接与踩坑见 `docs/api-facts.md` 第 24 节（接手直接读 24.3、24.4）**。
+> 与本节的差异（三条都是硬事实，别再照蓝图原方案重做）：
+> ① **9.1 的"优先 BM 骨骼"实测不可行**——`RightHandLocator` 是纯定位骨、`getDisplay()==null`，
+>    挂物品静默无效；`RightHand` 有渲染载体但那是手部几何体，替换等于把手换成剑且无法还原；
+>    `worldPosition()` 只返回模型局部坐标。**实际生效的是 9.1 的降级方案**（独立 ItemDisplay +
+>    几何偏移），骨骼链路保留为 `hand-item.mode` 开关，等模型补"手持物品骨"再用。
+> ② **craftengine 模式只验到启动**：CE 测试服没有任何 catmaid 物品定义，而 agent.md 6.1 禁止改
+>    `plugins/CraftEngine/`，所以 `byId + buildBukkitItem` 是"JAR 已核、未实测"；CE 缺物品时自动回落原版材质。
+> ③ 手部刷新走 2 tick 轮询（不是 `Maid#applyEquipment()` 回调），几何参数做成配置项；铃铛复活与魂符
+>    释放共用 `MaidManager#placeAt`（漏 `applyVitals` 就是"她只有 20 血"）。
+> **待客户端实测（不得视为通过）**：手部物品的观感、`on_store`/`on_release` 台词、死亡态收纳拒绝提示、
+> provider 全链路（尤其 craftengine）、跨 provider 的旧凭证互认。
+
+**目标**：①主副手物品在模型上可见；②魂符可收纳/释放女仆；③引入「依赖模式」配置，
+统一决定凭证物品方案（原版 / CE）与资源包链路（与 P10-10.3 的双包修复联动）。
+
+### 9.1 主副手物品显示（新增 `maid/HandItemDisplays`）
+
+背景：BetterModel 用 display 实体替换玩家外观后，原版装备槽的物品被模型遮住（P2 起已知，
+0.2 原本"明确排除"）。**本阶段反转该决定：主副手物品要可见**；盔甲可见仍排除（模型自带"服装"）。
+
+```
+- 每只女仆两个 ItemDisplay（主手/副手），item = maid.inventory() 主/副手物品；空手 → 移除显示
+- 位置/朝向来源，按优先级：
+  ① BetterModel 手部骨骼 —— **[已验证：不可用]** 定位骨 `getDisplay()==null`（挂上去静默无效），
+     手骨有渲染载体但那是几何体（替换=把手换成物品且不可还原），`worldPosition()` 只是模型局部坐标。
+     结论见 `docs/api-facts.md` 24.3-1/2；模型补了"手持物品骨"后改 `hand-item.main-bone` 即可启用
+  ② 降级方案：按实体朝向几何推导（主手右偏 ~0.32 格 / 高 ~1.25；副手镜像），
+     每 2 tick 错峰同步（tick % 2 == npcId % 2，同 NameTagManager 的调度模式）
+- 同步触发（**落地改为轮询**）：每 2 tick 错峰比对 inventory 主/副手 + modelId，变了才推；
+  空手/死亡/收纳/换模型都会在 ≤2 tick 内自动收敛，不依赖各调用点埋 refresh()
+- 姿态微调 [待验证]：SIT/WALK 手部高度不同，先用固定偏移，观感不行再按 Pose 调
+```
+
+资产无前置（只依赖位置，不依赖动画）；战斗/农业换武器由 applyEquipment 触发点自然覆盖。
+
+### 9.2 魂符收纳女仆
+
+语义（参考车万女仆 mod 的"随身收纳"体验）：
+
+```
+手持空魂符右键自己的女仆    → 收纳：NPC despawn（保留注册与 npcId）、DB 置 stored=1、
+                              魂符 PDC 写 catmaid:maid_id（变为"装有女仆的魂符"）
+手持装有女仆的魂符右键（空气/方块）→ 释放：npc.spawn(玩家旁)、stored=0、PDC 清除
+                              （魂符变回空魂符，可再次收纳）
+空魂符右键（不对女仆）      → 维持 P4 原语义（召唤新女仆）
+死亡铃铛态                  → 不可收纳（提示先复活）；战斗中允许收纳（直接打断目标）
+```
+
+- **数据**：`maids.stored`（0.6 已加列，启动 `ALTER TABLE` 幂等迁移）
+- stored 女仆：行为 tick 自然空转（entity 为 null）；**上限计数照算**（她仍是你的女仆）；
+  `/catmaid info` 与信息书显示「魂符中」
+- 收纳态魂符本体丢失 = 女仆仍在 DB：凭证可补发的通则由 P10-10.4 一并落地
+- 台词新键：`on_store` / `on_release`
+
+### 9.3 依赖模式（provider）
+
+```yaml
+dependency:
+  provider: vanilla            # vanilla | craftengine
+  craftengine:
+    bell-id: catmaid:bell      # provider=craftengine 时的 CE 物品 ID
+    talisman-id: catmaid:talisman
+  # vanilla 模式无需物品 ID：铃铛=BELL、魂符=AMETHYST_SHARD + PDC + displayName
+```
+
+- `util/MaidItems` 重构为**唯一物品工厂/识别器**：`bell(maid)` / `talisman()` / `storedTalisman(maid)` /
+  `isBell(stack)` / `isTalisman(stack)` / `isStoredTalisman(stack)`，内部按 provider 分派；
+  TalismanListener / MaidDamageListener / GuiManager / CatMaidCommand 一律只调它，不直接 new 物品
+- craftengine 模式的物品构造走 CE 公开 API —— **[已核对 CE 26.9.2]**：`CraftEngineItems.byId(String)`
+  → `BukkitItemDefinition#buildBukkitItem()`；识别用 `CraftEngineItems.getCustomItemId(stack).toString()`。
+  CE 是 paper-plugin（classloader 隔离）→ 反射调用；CE 缺该 ID 时回落原版材质并告警。
+  **实测边界**：测试服 CE 无任何物品定义，构造路径属"JAR 已核、未实测"（api-facts 24.3-5/6）
+- **两模式物品互认**：`catmaid:maid_id` PDC 在两种模式下都写——切换 provider 后玩家手里的旧铃铛/
+  旧魂符不作废（防资产报废）
+- **口径变更**：CraftEngine 由"零 API 耦合的软依赖"升级为"**可选 API 依赖**"（仅
+  provider=craftengine 时调用）；agent.md 1.4 的"仅 Citizens/BetterModel 两个 API 依赖"按本蓝图放宽
+
+### 验收清单（Phase 9）
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
+- [ ] 主手剑 / 副手食物在模型手上可见（客户端）；换装 ≤1s 刷新；空手无显示
+      （服务端已验：展示实体带正确物品、跟随移动、Y=实体Y+1.2；**观感必须客户端看**）
+- [x] 收纳 → 重启 → 释放：位置 / 好感 / 背包 / 模式全保留；stored 女仆不参与行为
+      （2026-11-12 探测命令实测：store→spawned=false→DB stored=1→重启"已收起收纳态…"→release→装备同步）
+- [ ] 死亡铃铛态收纳被拒并有提示；`on_store` / `on_release` 台词出现
+      （分支与台词键已写；铃铛态无实体，正常路径点不到，**需客户端构造 + 亲耳确认**）
+- [ ] provider=vanilla 与 craftengine 各跑一遍：召唤 / 喂食 / 死亡 / 复活 / 收纳全链路
+      （vanilla 已验收纳/释放；craftengine 只验到启动 + 回落告警，CE 无物品定义）
+- [ ] 切换 provider 后旧铃铛 / 魂符仍可识别（互认生效）
+      （识别只看 `catmaid:maid_id` / `catmaid:soul_talisman` 两个 PDC 键，逻辑成立但没跑过真物品）
+
+---
+
+## Phase 10 — 修复轮：P8 遗留与部署修正
+
+> **状态：未开工**（2026-11-12 服主反馈清单整理：3/4/5/7 四条修复归本章）。
+> 四类全是修复、不加新体验；10.3 依赖 P9 的 provider 配置，其余无前置。
+> 收尾时把 P8 挂起的客户端项一并回归（见 10.5）。
+
+**目标**：命令前缀统一、多女仆定向操作、进服单次资源包下载、铃铛丢失不锁死（绑定关系修复）。
+
+### 10.1 命令前缀统一
+- 现象 [已定位]：`plugin.yml` 的 `aliases`（`maid`/`猫娘`/实现期用过的 `女仆`）派生出
+  `/catmaid:女仆` 这类带命名空间的前缀，玩家看到多套命令入口。
+- 修法：**删除 plugin.yml 的全部 aliases**，唯一入口 `/catmaid`（0.4 的 plugin.yml 样例同步去掉
+  aliases 行）。纯配置改动、无逻辑变更；`messages.yml` 帮助文案里的别名提示一并删。
+- 验收：`/maid`、`/猫娘`、`/catmaid:xxx` 全部 unknown command；`/catmaid` 正常。
+
+### 10.2 多女仆定向操作
+- 现状 [已定位]：P8 命令一律操作"最近一只"（`resolveMaid`），`max-per-player` 默认 2 时第二只
+  只能靠走近了点 GUI，命令够不着。
+- 修法：命令加可选目标参数，默认仍是"最近"：
+```
+/catmaid gui|mode|sethome|rename|title|release|bell [名字]   ← 按名字定向；tab 补全自己名下女仆名
+/catmaid info                                                ← 列表带名字（选目标用）
+```
+- rename 查重：改名撞自己名下另一只的名字 → 拒绝（否则定向失效）。
+- 交付：`resolveMaid` 扩展（名字/最近双策略）+ 各命令分支传参 + tab 补全。
+
+### 10.3 双资源包下载修复
+- 根因 [已定位]：P0 定案的双包分离 = 原版 `resource-pack` 发 BM 包 + CE 再发自己的包 → 玩家
+  进服**两次下载**。
+- 修法（跟着 P9 的 provider 走，属部署动作 + 配置清空）：
+```
+provider=craftengine：BM 包并回 CE 包（恢复 P0 步骤 4 方案 A 的 merge-external-zip-files），
+                      server.properties 的 resource-pack / sha1 / require-resource-pack 清空 → 单次下载
+                      [待验证：合并后模型渲染与 CE 物品正常——P0 当时最终选了双包，方案 A 无通过记录]
+provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体移除——若服务器另有 CE 内容，
+                  CE 仍会发自己的包、两次下载依旧（部署文档写明取舍）
+```
+- 降级：CE 合并验证不过 → 退回双包分离（代价：维持两次下载），并在附录 A 记录结论。
+- 验收：两种 provider 下客户端进服只弹一次下载；模型与 CE 物品（若启用）渲染正常。
+
+### 10.4 铃铛丢失 / 女仆绑定关系修复（参考车万女仆）
+- 问题 [已定位]：女仆全灭 + 铃铛丢失（火烧已防，但玩家可能扔掉/存丢）→ maid 永远 `alive=0`、
+  占着 `max-per-player` 名额——既不能复活也腾不出位置，玩家被锁死。
+- 修复原则（重做绑定关系，参考车万女仆的绑定设计）：**DB 是绑定的事实来源，铃铛/魂符只是凭证，
+  凭证可以补发**——女仆与物品双向绑定、物品可再生成，不存在"凭证丢了女仆就永久没了"：
+```
+1. /catmaid bell [名字]      铃铛态女仆补发铃铛（消耗 = death.revive-cost 同额材料，
+                             防"丢铃铛白嫖传送回主人身边"）；持有铃铛 = 拥有复活权；仅 owner 可补发
+2. /catmaid release <名字>   主人自助送走（删 DB 记录 + NPC；铃铛态 / 收纳态 / 存活态均可；
+                             二次确认 = 聊天栏再输入一次名字）；admin remove 保留给管理员
+3. 上限口径不变（铃铛态仍占位——"她在等你救"的体验语义），有 ①② 两个出口后不可能再锁死
+4. 可选增强（默认关）：death.bell-expire-days —— 铃铛态超过 N 天后 /catmaid bell 免材料补发一次
+```
+- 验收：全灭 + 丢铃铛 → `/catmaid bell` 补发 → 复活闭环；release 后名额立即释放、可再召唤；
+  他人对别人的女仆补发 / 送走被拒。
+
+### 10.5 P8 挂起项回归
+- 把 P8 挂起的两项（新玩家全链路、60 只 TPS）与玩家侧命令 happy path 在本轮一并跑掉
+  （流程照 `docs/api-facts.md` 23.5.1），结果回填 P8 验收清单。
+
+### 验收清单（Phase 10）
+> 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
+
+- [ ] 命令唯一入口 `/catmaid`，别名与 `/catmaid:xxx` 命名空间前缀全部失效
+- [ ] 双女仆：按名字定向 gui / mode / sethome / rename；info 列表可作选择参考；rename 撞名被拒
+- [ ] 两种 provider 下进服均只下载一次资源包
+- [ ] 全灭 + 丢铃铛场景：补发 → 复活；release → 名额释放
+- [ ] P8 挂起项（全链路 / 60 只 TPS / 玩家侧命令 happy path）回归通过
+
+---
+
 ## 附录 A — 风险与降级预案
 
 | 风险 | 预案 |
@@ -1042,12 +1215,20 @@ combat:
 | 无玩家在线导致 tick 计时永远攒不满 | **事实**[已实测]：`/npc spawn` 后约 1 分钟 Citizens 就把 NPC 丢掉，FOLLOW_TICK 这类 5 分钟计时在无客户端环境永远到不了阈值。**采用方案**：计时间隔做成配置项（`affection.follow-tick-interval-seconds`），验收时调短验证机制；真人观感仍需客户端（18.3-4） |
 | `plugin.reloadConfig()` 后"提示成功但行为没变" | **事实**[源码已核]：Paper 的 `JavaPlugin#reloadConfig()` 是 `newConfig = YamlConfiguration.loadConfiguration(configFile)`——**换对象**。`MaidManager`/`AffectionManager`/五个 `BehaviorMode` 都是构造期抓引用，换对象等于它们永远读旧值。**采用方案**（**P8 已落码** `CatMaidCommand#reloadConfigInPlace`）：先清空再逐键 `set` 进当前 `FileConfiguration`，所有持有者立刻生效；`models` 名单与 `nametag.scale/height` 是构造期快照，仍需重启（api-facts 23.3-1） |
 | 升级后 `/catmaid` 帮助还是旧命令表 | **事实**[已实测]：`Messages.mergeMissingKeys` 只补"文件里没有的键"，`help` 这种已存在的列表键不会被更新。**采用方案**：升级到 P8 时删一次 `plugins/CatMaid/messages.yml` 让插件按 jar 模板重建，或手动替换 `help:` 段（api-facts 23.3-2） |
+| BetterModel 不暴露骨骼位置 API（P9 手部物品显示的前提之一） | **事实**[已实测，P9]：① `RightHandLocator` 能取到，但 `RenderedBone#getDisplay()==null`——纯定位骨，`itemStack(...)` 静默成功、屏幕上没有；② `RightHand` 有 display，但那是手部几何体，用物品替换等于把手换成剑且还原不回来；③ `worldPosition()` 返回模型局部坐标（四根手臂骨都是 `(0,-0.01875,0)`），做不了外部挂点。**采用方案**（P9 已落码 `maid/HandItemDisplays`）：实际走降级——独立 `ItemDisplay` + 按实体朝向几何偏移（右偏 0.32 / 前偏 0.22 / 高 1.20，可配），每 2 tick 错峰跟随。骨骼链路保留为 `hand-item.mode: bone`，等模型补「手持物品骨」再启用（api-facts 24.3-1/2） |
+| CraftEngine 物品构造/识别 API 与预期不符（P9 provider=craftengine 的前提） | **事实**[JAR 已核，CE 26.9.2]：`CraftEngineItems.byId(String)` → `BukkitItemDefinition#buildBukkitItem()`；识别 `getCustomItemId(stack).toString()`（`ns:值`）。CE 同时带 plugin.yml 与 paper-plugin.yml → classloader 隔离，必须反射。**采用方案**（P9 已落码 `util/MaidItems`）：按核对签名实现 + 运行时自检；CE 缺物品 ID 就回落原版材质并告警。**物品互认兜底**：身份只认 `catmaid:maid_id` / `catmaid:soul_talisman` 两个 PDC 键，与材质/CE ID 无关，切 provider 旧物品不作废。**未实测**：CE 构造路径（测试服 CE 无任何物品定义，api-facts 24.3-6） |
+| CE 合并 BM 包后模型/物品渲染异常（P10-10.3） | [待验证] P0 最终定案走双包分离、方案 A（merge-external-zip-files）无通过记录；合并前先在测试服验证。降级：退回双包分离（代价：进服两次下载），结论记录回 api-facts |
+| 铃铛丢失导致女仆永久占位、玩家被上限锁死 | **事实**[已定位]：全灭 + 铃铛丢失时 maid 永远 alive=0 且占 `max-per-player` 名额。**采用方案**（P10-10.4）：DB 为绑定事实来源、物品只是凭证——`/catmaid bell` 补发（收同额复活材料）+ `/catmaid release` 自助送走（二次确认）；上限口径不变但出口常开 |
 
 ## 附录 B — 阶段依赖关系
 
 ```
-P0 ─→ P1 ─→ P2 ─→ P3 ─→ P4 ─→ P5 ─→ P6 ─→ P7 ─→ P8
-              │                    │
+P0 ─→ P1 ─→ P2 ─→ P3 ─→ P4 ─→ P5 ─→ P6 ─→ P7 ─→ P8 ─→ P9 ─→ P10
+              │                    │                        │
               └─ P2 依赖 P1 的 Maid/GUI 持久化    └─ P5/P6 依赖 P3 行为框架与 P4 好感度钩子
+                                                             │
+                                        P9 依赖 P4 的魂符/死亡体系与 P8 的命令框架；
+                                        P10 修复 P8 遗留（命令/多女仆/双包/铃铛绑定），10.3 依赖 P9 的 provider 配置
 ```
 严格按序实施；每阶段验收清单全部勾选后才允许进入下一阶段（见 agent.md 第 3 节）。
+P8 曾在两项未验证时由服主决定收口（见 P8 状态注），该欠账由 P10-10.5 回归还清，此后不再允许带未验项收口。

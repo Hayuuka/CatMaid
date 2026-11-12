@@ -2245,3 +2245,148 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 
 服主在 P8 收口时反馈"发现一些冲突"，但为不阻塞进度先收口，细节尚未整理进本文档。
 下一位接手请先向服主确认冲突清单，再据实修订 23.3/23.4 或蓝图附录 A。
+
+---
+
+## 24. Phase 9 交接（手部物品 / 魂符收纳 / 依赖模式，2026-11-12）
+
+> **收口状态：代码完成；服务端验收 3/5，客户端项未验证。**
+> 测试环境：`paper-26.2-62.jar` + Citizens 2.0.44 build 4269 + BetterModel 3.7.0 + CraftEngine 26.9.2。
+> 启动 `ERROR|SEVERE|Exception` 计数 **0**。无玩家在线时 Citizens 会把女仆全部 despawn（同 23.3-4），
+> 因此"右键收纳/释放""手上物品看得见"这类交互只能等真人客户端。
+
+### 24.1 阶段结论
+
+三件事都落地了，但**其中一件的关键前提被实测推翻**：
+
+1. **手部物品显示（9.1）**：BetterModel 的模型骨骼**不能**直接挂物品（原因见 24.3-1、24.3-2），
+   最终走"独立 ItemDisplay + 几何偏移"；服务端已验证展示实体被创建、物品内容正确、跟着女仆移动。
+2. **魂符收纳（9.2）**：`stored` 列 + 幂等迁移、收纳/释放、收纳态不生成实体不参与行为全部实测通过
+   （用临时探针命令跑完 store → 重启 → release，探针已删）。
+3. **依赖模式（9.3）**：`MaidItems` 重构成唯一工厂/识别器，两种 provider 都能启动；
+   **craftengine 模式只验到启动**——测试服 CE 里没有 `catmaid:bell` / `catmaid:talisman` 物品定义，
+   而 agent.md 6.1 禁止改 `plugins/CraftEngine/`，所以构造/识别路径仍是"JAR 已核、未实测"。
+
+### 24.2 新增 / 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `maid/HandItemDisplays.java` | 新增。主副手物品显示：先试模型手持物品骨，不行退独立 `ItemDisplay`；每 2 tick 错峰同步，空手/死亡/收纳/换模型自动刷新 |
+| `util/MaidItems.java` | 重构成实例类（唯一工厂/识别器）：`bell` / `talisman` / `storedTalisman` / `isBell` / `isTalisman` / `isStoredTalisman` / `maidIdOf` / `consumeOne`，内部按 provider 分派 |
+| `maid/Maid.java` | 新增 `stored` 字段与读写 |
+| `data/Database.java` | `maids.stored` 列 + `migrateStoredColumn()`（PRAGMA table_info 判断后 ALTER，幂等） |
+| `data/MaidRepository.java` | `stored` 读写（含 Snapshot record 增字段） |
+| `maid/MaidManager.java` | 新增 `store` / `release` / `placeAt`；`despawnDeadNpcs` → `despawnHiddenNpcs`（铃铛态 + 收纳态）；载入时跳过收纳态 |
+| `behavior/BehaviorManager.java` | 新增 `reset(maid)`：停导航 + 清当前模式状态 + 丢动画记忆（不动好感/台词计时） |
+| `listener/MaidInteractListener.java` | 手持空魂符右键自己的女仆 = 收纳；手持"装着她"的魂符再右键 = 拒绝提示 |
+| `listener/TalismanListener.java` | 装有女仆的魂符右键 = 释放（放回玩家身后、魂符变回空的）；铃铛复活改走 `placeAt` |
+| `listener/MaidDamageListener.java`、`command/CatMaidCommand.java` | 改用 `MaidItems` 实例；`state` 三态（存活/铃铛/魂符中） |
+| `gui/GuiManager.java` | 信息书在收纳态多一行「魂符中」 |
+| `listener/PlayerConnectionListener.java` | 上线补挂跳过收纳态 |
+| `CatMaidPlugin.java` | 创建 `MaidItems` 与 `HandItemDisplays`，启动打一行 provider 说明 |
+| `config.yml` | 新增 `dependency.*`（provider / CE 物品 ID）与 `hand-item.*`（模式、骨名、独立显示几何参数） |
+| `messages.yml` | 新增 `state-stored`、`gui.info-stored`、收纳/释放 9 个键 |
+| `dialogue.yml` | 新增 `on_store` / `on_release` |
+
+### 24.3 实测 / JAR 核对出来的 API 事实
+
+1. **[已实测] BetterModel 的定位骨没有渲染载体**：`tracker.bone("RightHandLocator")` 能拿到
+   `righthandlocator`（骨名全小写），但 `RenderedBone#getDisplay()` == **null**。
+   往它上面 `itemStack(...)` 会"成功"但屏幕上什么都没有——和 17.9 的"缺动画静默失败"同一类坑。
+   foxmaid 共 **110** 根骨，`righthand` / `lefthand` 有 display，但那是手部的**几何体**，
+   用物品替换等于把手换成剑（松手还原不回来），不能当挂点。
+   **对后续影响**：模型要在 Blockbench 里加一根"专门放手部物品"的骨（BM 里能拿到 display 的空骨），
+   代码这边改 `hand-item.main-bone` 即可切换；在那之前一律走独立展示实体。
+2. **[已实测] `RenderedBone#worldPosition()` / `worldRotation()` 不是世界坐标**：
+   foxmaid 上四根手臂骨都返回 `(0, -0.01875, 0)`，与实体实际坐标（15.98, 72, 0.02）无关——
+   是模型局部空间的静止值。想"用骨骼位置驱动外部显示实体"这条路不成立。
+3. **[JAR 已核] 骨骼挂物品的完整调用链**（留给以后有手持物品骨的模型）：
+   `BetterModel.registryOrNull(UUID)` → `EntityTrackerRegistry#first()` → `Tracker#bone(String)` →
+   `RenderedBone#itemStack(Predicate<RenderedBone>, TransformedItemStack)`；
+   物品包装用 `TransformedItemStack.of(new BukkitItemStack(ItemStack))`，清空用 `TransformedItemStack.empty()`。
+   `Tracker#bones()` 可枚举全部 110 根骨（排查骨名靠它）。
+4. **[实测] 独立 `ItemDisplay` 的表现**：`setItemDisplayTransform(THIRDPERSON_RIGHTHAND/LEFTHAND)`
+   + `setRotation(实体 yaw/pitch)`，位置 = 实体脚下 + 1.2 格高、右偏 0.32、前偏 0.22。
+   服务端核对到：展示实体带正确物品（`item` 数据是 `minecraft:bow`）、Y 恒为 `实体Y+1.2`、
+   连续两次查询位置变化（女仆走动时它跟着走）。
+5. **[JAR 已核] CraftEngine 物品 API**（CE 26.9.2）：
+   `CraftEngineItems.byId(String)` → `BukkitItemDefinition#buildBukkitItem()` 得 `ItemStack`；
+   `CraftEngineItems.getCustomItemId(ItemStack)` 得 `Key`（`toString()` = `命名空间:值`，可直接和配置串比较）。
+   CE 同时带 `plugin.yml` 与 `paper-plugin.yml`，运行时与 Bukkit 插件 classloader 隔离 → **必须反射**
+   （与 BetterModel 同一套理由）。
+6. **[未实测] CE 物品写入 Bukkit PDC 后是否还保留 CE 身份**：测试服 CE 里没有任何自定义物品可用，
+   无法构造最小样本。代码里写了自检 `warnIfLostCeIdentity`：一旦 CE 认不出来就打一条告警
+   （功能不受影响——识别只靠 `catmaid:maid_id` / `catmaid:soul_talisman`）。**待有 CE 物品的环境实测**。
+7. **[已实测] SQLite 加列**：`CREATE TABLE IF NOT EXISTS` 对老库不生效，必须 `PRAGMA table_info` 查完再
+   `ALTER TABLE ... ADD COLUMN`；实测老库（P8 建的表）启动后列出现在末尾、值全 0，第二次启动不再改结构。
+8. **[已实测] 收纳态重启后确实不生成实体**：`restoreNpcs` 跳过收纳态；Citizens 会按存档把她的身体
+   恢复出来一次，`despawnHiddenNpcs` 立刻收起，日志 `已收起收纳态女仆 小铃 的残留实体（NPC 25）`。
+   释放后 `placeAt` 重新 spawn + 重挂模型 + 补装备血量，日志出现 `装备同步 主手=BOW`。
+   （注：释放时 `placeAt` 与 `MaidTrait#onSpawn` 各刷一次装备，日志会看到两行同样的"装备同步"，属正常。）
+
+### 24.4 与蓝图的有意差异
+
+1. **9.1 的 ① 骨骼方案实际未启用**：蓝图要求"优先 BM 骨骼、降级几何推导"，实测 ① 在当前模型上
+   物理不可行（24.3-1/2）。代码保留了 `hand-item.mode: auto|bone|display` 与骨骼调用链，
+   `auto` 每次都先试、失败了打一行原因再退独立显示；**现在实际生效的永远是 display**。
+2. **刷新靠轮询而非 `Maid#applyEquipment()` 回调**：装备改动有 5 条来源（GUI 回写、召唤、恢复、
+   死亡、换模型），逐个埋点必漏；改成每 2 tick 错峰比对（≤100ms 跟上，满足蓝图"换装 ≤1s"）。
+3. **手部几何参数做成配置**（`hand-item.display-side/forward/height/scale`）：这条只能在客户端调，
+   写死在代码里等于每调一次都要重新构建发版。
+4. **`placeAt` 抽成 MaidManager 的公共方法**：铃铛复活与魂符释放的生成逻辑一模一样，
+   各写一遍必然漏 `applyVitals`（20.9-A5 的"她只有 20 血"）。复活路径因此少了一段代码。
+5. **`despawnDeadNpcs` 改名为 `despawnHiddenNpcs`**：铃铛态与收纳态都需要"别把身体恢复出来"，
+   两件事合成一个兜底，日志按状态分别说明。
+
+### 24.5 验收结果（服务端 2026-11-12 23:38–23:59）
+
+| 蓝图 P9 验收项 | 结论 | 证据 |
+|---|---|---|
+| 主手剑 / 副手食物在模型手上可见（客户端） | ⚠ 客户端未验证 | 服务端确认展示实体被创建、`item` 数据正确、跟随女仆移动（24.3-4）；观感（位置/朝向/大小）必须真人看 |
+| 换装 ≤1s 刷新、空手无显示 | ⚠ 部分 | 轮询周期 2 tick；空手分支代码为"移除展示实体"，未在客户端核过观感 |
+| 收纳 → 重启 → 释放；位置/好感/背包/模式保留 | ✅（服务端） | 探针：`store` 后 `spawned=true→false`、DB `stored=1`；重启日志"已收起收纳态…（NPC 25）"且不生成实体；`release` 后 `spawned=true`、`装备同步 主手=BOW`；DB 回 `stored=0`，好感 34.4 / 模式 IDLE 未变 |
+| stored 女仆不参与行为 | ✅（服务端） | 收纳态 `maid.entity()==null`，`BehaviorManager` 首道守卫直接返回 |
+| 死亡铃铛态收纳被拒并有提示 | ⚠ 客户端未验证 | `store-dead` 分支已写；铃铛态没有实体，正常操作路径根本点不到——只能靠客户端构造极端场景 |
+| `on_store` / `on_release` 台词出现 | ⚠ 客户端未验证 | 台词键已加，`DialogueManager` 只发给在线主人，服务端无玩家时静默丢弃 |
+| provider=vanilla 全链路 | ✅（部分） | 启动 `provider=vanilla（铃铛 BELL，魂符 AMETHYST_SHARD）`；收纳/释放链路如上一行。喂食/死亡/复活仍沿用 P4 已验逻辑，本轮只换了物品工厂 |
+| provider=craftengine 全链路 | ⚠ 只验启动 | 启动 `provider=craftengine（…CE 缺失时回落 BELL / AMETHYST_SHARD）`，0 异常；**构造/识别未实测**（CE 无物品定义，见 24.3-6） |
+| 切换 provider 后旧铃铛 / 魂符仍可识别 | ⚠ 未实测 | 识别只看 `catmaid:maid_id` / `catmaid:soul_talisman` 两个 PDC 键，与材质/CE ID 无关；逻辑成立但没跑过真物品 |
+
+### 24.6 冲突处理记录（agent.md 第 9 节格式）
+
+```
+[CONFLICT] 蓝图位置: Phase 9-9.1「① BetterModel 手部骨骼 [待验证]；② 降级：按实体朝向几何推导」
+现实情况: 模型里能拿到的两根 hand 骨，定位骨(RightHandLocator)没有渲染载体、挂物品不可见；
+         手骨(RightHand)有渲染载体但那是手的几何体，替换等于把手换成物品且无法还原；
+         RenderedBone#worldPosition() 返回模型局部坐标，也做不了外部挂点
+采用方案: 一律走 ②（独立 ItemDisplay + 几何偏移），① 保留为配置开关等模型补手持物品骨  理由: ①在当前资产上不可实现，硬做会把手部模型弄坏
+```
+
+```
+[CONFLICT] 蓝图位置: Phase 9-9.3「craftengine 模式物品构造走 CE 公开 API [待验证]」
+现实情况: API 已从 CE 26.9.2 jar 核对（byId + buildBukkitItem + getCustomItemId），但测试服 CE 里
+         没有任何 catmaid 物品定义，而 agent.md 6.1 禁止改 plugins/CraftEngine/ → 无法构造样本实测
+采用方案: 按核对过的签名实现，运行时自检并在失败时回落原版材质（带告警）  理由: 不乱改 CE 配置的前提下这是唯一可做的验证边界
+```
+
+### 24.7 已知限制 / 部署注意
+
+1. **升级到 P9 必做一次**：删 `plugins/CatMaid/messages.yml`（或手动补键），否则「魂符中」「收纳/释放」
+   这些新文案不会进旧文件（`mergeMissingKeys` 只补缺失键——这次新增的都是新键，所以**其实会自动补上**；
+   但 `help` 段仍是旧的，P10-10.2 会重排命令）。
+2. **`config.yml` 不会自动长出新键**：`dependency.*` 与 `hand-item.*` 若沿用旧文件，代码走内置默认值
+   （vanilla / auto / RightHandLocator / 0.32·0.22·1.20·0.55）。想调手感就对照仓库模板手抄这几段。
+3. **手部物品的观感只能客户端调**：位置不对就改 `hand-item.display-side/forward/height`，
+   改完 `/catmaid admin reload` 不生效——这三个值在 `HandItemDisplays` 构造时读取，**要重启**。
+4. **收纳态的凭证只有一张**：魂符丢了她仍在库里（`stored=1`），补发渠道是 P10-10.4 的
+   `/catmaid bell` 那一套思路，本轮没做。
+5. **收纳态仍占 `max-per-player` 名额**（蓝图明确要求"她依旧是你的女仆"），主人满额时只能先释放。
+6. **craftengine 模式的物品 ID 要在 CE 侧先定义**：`catmaid:bell` / `catmaid:talisman` 两个 ID
+   没定义时插件会自动回落原版材质（日志一条 WARNING），功能不受影响、只是外观不是 CE 的。
+7. **切换 provider 不用重发资源包**：铃铛/魂符的身份是 PDC，换模式只是"新建的物品长什么样"变了。
+
+### 24.8 玩家须知补充（贴公告时追加）
+
+- 手上拿**空魂符**右键自己的女仆 = 把她收进魂符（随身带着走）；拿**装有她的魂符**右键 = 放出来。
+- 收进魂符的女仆不会自己干活、也不占世界里的位置，但**仍然算你的女仆名额**。
+- 她倒下变成铃铛时不能收纳——先把铃铛唤醒。
