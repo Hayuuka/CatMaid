@@ -1,8 +1,12 @@
 package dev.catmaid.command;
 
+import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.DialogueManager;
+import dev.catmaid.gui.GuiManager;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.ModelRegistry;
+import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import org.bukkit.Bukkit;
@@ -13,6 +17,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
@@ -25,19 +30,43 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * /catmaid 命令树。Phase 1 实现了 admin 三个子命令，Phase 4 加了 talisman（魂符发放），
- * 其余（gui/mode/info/rename/sethome/admin reload 等）在 Phase 8 补齐。
+ * /catmaid 命令树。
+ *
+ * <p>Phase 1 实现了 admin 三个子命令，Phase 4 加了 talisman，Phase 8 补齐玩家侧
+ * （gui/mode/sethome/info/rename/title）与 admin 的 setaffection/reload。
+ *
+ * <p>玩家侧命令都要先"找到说的是哪只女仆"：{@link #resolveMaid(Player)} 先找 8 格内的，
+ * 实在找不到才接受"你只有一只活着"的退让——绝不跨越到别人的女仆（api-facts 22.3-3）。
  */
 public final class CatMaidCommand implements CommandExecutor, TabCompleter {
+
+    /** 玩家侧命令认领女仆的半径（蓝图 P8：/catmaid gui 打开"最近一只（或 8 格内）"）。 */
+    private static final int NEARBY_RADIUS = 8;
+
+    /** 改名 / 改称呼的好感门槛（蓝图 P4 等级表：伙伴档起解锁改名）。 */
+    private static final int RENAME_MIN_AFFECTION = 40;
+
+    private static final int NAME_MIN_LENGTH = 2;
+    private static final int NAME_MAX_LENGTH = 12;
 
     private final MaidManager maidManager;
     private final ModelRegistry models;
     private final Plugin plugin;
+    private final GuiManager gui;
+    private final AffectionManager affection;
+    private final DialogueManager dialogue;
+    private final NameTagManager nameTags;
 
-    public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin) {
+    public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
+                          GuiManager gui, AffectionManager affection, DialogueManager dialogue,
+                          NameTagManager nameTags) {
         this.maidManager = maidManager;
         this.models = models;
         this.plugin = plugin;
+        this.gui = gui;
+        this.affection = affection;
+        this.dialogue = dialogue;
+        this.nameTags = nameTags;
     }
 
     @Override
@@ -48,11 +77,75 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
+            case "gui" -> gui(sender);
             case "talisman" -> talisman(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
         }
         return true;
+    }
+
+    /**
+     * 打开最近女仆的主菜单。命令只是"找对人再交给 GUI"，界面逻辑一律留在 GuiManager。
+     */
+    private void gui(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        Maid maid = resolveMaid(player);
+        if (maid == null) {
+            return; // resolveMaid 已经给过提示
+        }
+        gui.openMain(player, maid);
+    }
+
+    /**
+     * 玩家侧命令的公共目标解析：先找 8 格内自己名下、实体在线的女仆（取最近），
+     * 再退"自己只有一只活着的女仆"（她坐家里/在别处也允许用命令）。
+     *
+     * <p>找不到时直接把提示发给玩家并返回 null——调用方只需要判空，不要各自再拼文案。
+     */
+    private Maid resolveMaid(Player player) {
+        List<Maid> owned = maidManager.byOwner(player.getUniqueId());
+        if (owned.isEmpty()) {
+            Messages.send(player, "no-maid");
+            return null;
+        }
+        Maid nearest = null;
+        double bestSq = (double) NEARBY_RADIUS * NEARBY_RADIUS;
+        for (Maid maid : owned) {
+            if (!maid.isAlive()) {
+                continue;
+            }
+            LivingEntity entity = maid.entity();
+            if (entity == null || !entity.getWorld().equals(player.getWorld())) {
+                continue;
+            }
+            double distSq = entity.getLocation().distanceSquared(player.getLocation());
+            if (distSq <= bestSq) {
+                bestSq = distSq;
+                nearest = maid;
+            }
+        }
+        if (nearest != null) {
+            return nearest;
+        }
+        List<Maid> alive = new ArrayList<>();
+        for (Maid maid : owned) {
+            if (maid.isAlive()) {
+                alive.add(maid);
+            }
+        }
+        if (alive.size() == 1) {
+            return alive.getFirst();
+        }
+        Messages.send(player, "no-maid-nearby", Map.of("radius", String.valueOf(NEARBY_RADIUS)));
+        return null;
     }
 
     private void admin(CommandSender sender, String[] args) {
@@ -227,9 +320,10 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            // 普通玩家只有 talisman，不要因为没 admin 权限就把补全整个清空
+            // 普通玩家只有玩家侧命令，不要因为没 admin 权限就把补全整个清空
             List<String> subs = new ArrayList<>();
             if (sender.hasPermission("catmaid.use")) {
+                subs.add("gui");
                 subs.add("talisman");
             }
             if (sender.hasPermission("catmaid.admin")) {

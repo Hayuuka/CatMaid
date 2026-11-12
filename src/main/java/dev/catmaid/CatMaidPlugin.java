@@ -124,7 +124,8 @@ public final class CatMaidPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new OwnerProtectionListener(this, maidManager, behaviorManager), this);
 
-        CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this);
+        CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this, guiManager,
+                affectionManager, dialogueManager, nameTagManager);
         PluginCommand pluginCommand = getCommand("catmaid");
         if (pluginCommand != null) {
             pluginCommand.setExecutor(command);
