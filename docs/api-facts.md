@@ -2096,3 +2096,127 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 3. `attack-interval-ticks: 20` 对斧略欠，要满伤得调到 25（21.7-1）。
 4. 战斗模式不掷待机台词，别在 P8 里"顺手补上"——那会让打架时碎碎念。
 5. 验收环境已固化（21.8）：游戏服 25566 + 资源包服 8123 + 场边补给箱；资源包 sha1 必须对齐。
+
+---
+
+## 23. Phase 8 交接（配置化 / 命令 / 收尾打磨，2026-11-12）
+
+### 23.1 阶段结论
+
+命令树、文案外置、配置补齐、名牌颜色四项全部落地并服务端实测；蓝图 P8 的最终验收
+**四项里两项已过（重启恢复、reload 生效），另两项（新玩家全链路、60 只 TPS）需要真人客户端在线**——
+无玩家时 Citizens 会把全部女仆 despawn（原因见 23.3-4），服务端测不出行为负载。
+
+构建与启动：`gradlew shadowJar` 通过；paper-26.2-62 启动 `ERROR|Exception` 计数 0
+（唯一一条 `TerminalConsole 拒绝访问` 是本轮用 fifo 起服的环境问题，与服务端/插件无关，见 23.7-6）。
+
+### 23.2 新增 / 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `command/CatMaidCommand.java` | 补齐 gui/mode/sethome/info/rename/title + admin setaffection/reload；`resolveMaid` 最近女仆解析；talisman 冷却与开关；tab 补全按权限分层 |
+| `maid/AffectionTable.java` | 新增 `threshold(int level)`（按档位取阈值，供 rename/title 门槛与提示数值） |
+| `maid/NameTagManager.java` | 名字按好感等级上色；记录 renderedLevels，过档才重设文本；refresh/remove 同步清理 |
+| `maid/MaidManager.java` | 召唤时 `general.default-title` 作为默认称呼 |
+| `dialogue/AffectionReason.java` | 新增 `ADMIN`（setaffection 专用，配置里无数值键） |
+| `dialogue/AffectionManager.java` | `configKey()` 的穷尽 switch 补 `ADMIN -> null` |
+| `util/Messages.java` | 新增 `rawList(key)`（取未解析的模板列表，给名牌拼色用） |
+| `behavior/BehaviorManager.java` | 读到 `performance.behavior-tick-stagger: false` 时明确告警（不静默吞掉） |
+| `config.yml` | `general.default-title`、`interaction.talisman-enabled/-cooldown-hours`、`performance.*` |
+| `messages.yml` | help 段重写 + 21 个新键（no-maid / mode-* / home-set / info-* / rename-* / title-* / talisman-* / affection-* / reload-done / remove-all-success）+ `nametag.name-colors` |
+| `CatMaidPlugin.java` | 命令构造注入 gui/affection/dialogue/nameTags |
+
+### 23.3 实测新增的 API / 行为事实
+
+1. **[源码已核] `JavaPlugin#reloadConfig()` 会换对象**：Paper 的实现是
+   `newConfig = YamlConfiguration.loadConfiguration(configFile)` —— 它**不**原地改旧对象。
+   而 `MaidManager` / `AffectionManager` / 五个 `BehaviorMode` 都在构造时抓住了 `getConfig()` 的引用，
+   直接调 `reloadConfig()` 的结果是"提示重载成功、行为一点没变"。
+   **采用方案**：`CatMaidCommand#reloadConfigInPlace()` 把文件里的键逐个 `set` 进当前 FileConfiguration
+   （先清空再覆盖），所有持有者立刻看到新值。改不到的部分：`models` 名单、`nametag.scale/height`
+   （构造期快照），已写进命令提示。
+2. **[已实测] messages.yml 的合并只补缺键、不改已有键**：P7 的 `messages.yml` 里 `help` 段是旧的，
+   起来后 `/catmaid` 仍只列 3 条旧命令。升级姿势：删掉 `plugins/CatMaid/messages.yml` 让插件按 jar 模板重建，
+   或手动替换 `help:` 段。**这是升级必踩的一次性动作**。
+3. **[已实测] 控制台/RCON 的 sender 不是 Player**：`/catmaid gui|mode|talisman` 从 RCON 发会得到
+   "该命令只能由玩家执行"。玩家侧命令的服务端验证因此只能验拦截分支，happy path 必须真人客户端。
+4. **[已实测] 无玩家在线时 60 只女仆压测无效**：`admin summon` 分 tick 召了 58 只（cap 61 / max-per-player 60），
+   TPS 20.0 / MSPT 2.5ms 看着很漂亮，但 Citizens 早已把她们全部 despawn（`maid.entity()` 全为 null，
+   行为 tick 全空转）——测出来的是"58 条数据库记录"，不是 58 个实体。
+   **60 只 TPS 只能在真人客户端在线时测**（流程：客户端进服 → cap 调 61、max-per-player 调 60 → reload →
+   每 2 tick 召一只 → 站她身边看 `/tps` 与 `/mspt`）。
+5. **[JAR 已核] `NPC#setName(String)` 存在**（citizens-main）：`rename` 改名时同步 NPC 名，
+   避免 `/npc list` 与名牌两处名字不一致。
+6. **[已实测] `summonFor` 的两道上限都会挡住压测**：`maids.size() >= global-maid-cap` 与
+   `byOwner().size() >= max-per-player`；召 60 只要同时把它们调到 61 / 60。
+7. **[已实测] reload 的容量刷新是真生效的**：把 `affection.levels` 里第 1 档容量 30→31→32，
+   `/catmaid admin reload` 后日志逐只打印 `小铃 背包容量 31 → 32`；没改数值时 reload 不打印任何行（幂等）。
+
+### 23.4 与蓝图的有意差异
+
+1. **`performance.behavior-tick-stagger` 目前是"形状键"**：错峰写在五个 Mode 与 NameTagManager 内部
+   （`tick % N == npcId % N`），关掉它需要逐 Mode 改造，本轮不做；读到 `false` 会打一条告警，
+   不静默吞掉。蓝图 P8 只要求"补这个段"，故按字面满足，行为保持恒开。
+2. **`/catmaid talisman` 的冷却记在内存**：重启即清零。它不是经济系统，为它加一张表不划算；
+   真正的服用方式是 `interaction.talisman-cooldown-hours: 0` 或关掉自助领取。
+3. **rename/title 的门槛按"档位"而非写死 40**：`RENAME_MIN_LEVEL = 2`（伙伴档），
+   提示里的数值由 `AffectionTable.threshold(2)` 取——服主改了阈值，解锁点与提示一起跟着走。
+4. **`/catmaid mode` 认 messages.yml 里的中文模式名**：`gui.mode-<枚举名>` 就是输入别名，
+   服主把「农业」改成「种田」，命令输入、GUI 按钮、提示文案一起变；代码里没有中文别名表。
+5. **`general.default-title` 是 P8 顺手加的配置**：`Maid` 的字段默认值仍是"主人"，
+   但新召唤的女仆按配置写称呼（agent.md 5.5 的"玩家可见文案不硬编码"）。
+
+### 23.5 验收结果（服务端实测 2026-11-12 22:22–22:44）
+
+| 蓝图 P8 项 | 结论 | 证据 |
+|---|---|---|
+| `/catmaid` 帮助列出全部新命令 | ✅ | 12 行输出，含 gui/mode/sethome/info/rename/title/setaffection/reload |
+| 玩家侧命令的玩家/权限闸门 | ✅（拦截侧） | RCON 发 `gui`/`mode 农业`/`talisman` 均回"该命令只能由玩家执行"；happy path 待客户端 |
+| `admin list` | ✅ | 3 只女仆，名字/主人/模型/好感/存活齐全 |
+| `admin setaffection` 正常 | ✅ | 20.4 → 60.0，日志"升到等级 3（背包 36 格）"，DB 落库 60.0 |
+| `admin setaffection` 异常三路 | ✅ | 120 → "要在 0.0 到 100.0 之间"；缺参 → 用法；非 UUID → "找不到这个女仆" |
+| `admin reload` 生效 | ✅ | 容量 30→31→32 逐次生效，日志"小铃 背包容量 31 → 32"；未改数值时无输出（幂等） |
+| `admin remove` 批量清理 | ✅ | 58 只一次清完，提示改为"已送走 loadtest 名下的 58 只女仆"；DB 回到 3 只 |
+| 重启后状态恢复 | ✅ | 好感 60.0 / 模式 COMBAT / 铃铛态汐音 / 座位/装备均按库恢复，启动 0 ERROR |
+| 新玩家全链路（领魂符→召唤→喂食→农/牧/战→死亡→复活） | ⏳ 待客户端 | 各环节在 P4–P7 已分别客户端验过，本轮只补命令入口 |
+| 60 只女仆 TPS ≥ 19.5 | ⏳ 待客户端 | 见 23.3-4：无玩家时实体全被 despawn，测不出负载 |
+
+### 23.6 冲突处理记录（agent.md 第 9 节格式）
+
+```
+[CONFLICT] 蓝图位置: Phase 8 打磨项「config.yml 补 performance 段：behavior-tick-stagger: true」
+现实情况: 错峰逻辑分布在各 Mode 与 NameTagManager 内部（tick % N == npcId % N），没有一个统一的开关点；
+         关掉错峰需要改 6 个文件，且没有玩家会想关（关了 60 只女仆同 tick 扫方块）
+采用方案: 保留键位并在读到 false 时告警，行为恒开  理由: 满足配置形状，且不让"看起来能关"变成静默谎言
+```
+
+```
+[CONFLICT] 蓝图位置: Phase 8「/catmaid admin reload → 重载 config + dialogue」
+现实情况: Paper 的 reloadConfig() 换对象，构造期抓住旧引用的 5 个组件看不到新值
+采用方案: 原地覆盖 config 的键  理由: 不改 6 个类的构造签名，reload 立刻对所有持有者生效
+```
+
+### 23.7 已知限制 / 部署注意
+
+1. **升级到 P8 必做一次**：删 `plugins/CatMaid/messages.yml`（或手动替换 `help:` 段），
+   否则 `/catmaid` 的帮助还是旧命令表（23.3-2）。
+2. **config.yml 同理不会自动长出新键**：`general.default-title`、`interaction.talisman-*`、
+   `performance.*` 三处若沿用旧文件，代码走内置默认值（24 小时冷却 / 上限 60 / 称呼"主人"），
+   想配就对照仓库 `src/main/resources/config.yml` 手动补。
+3. **`models` 名单、`nametag.scale/height` 需要重启**才生效（构造期快照），reload 提示里已写明。
+4. **改名/改称呼的富文本闸门**：直接拒收 `<`、`&`、`§`（MiniMessage / 旧颜色码 / 段落符入口），
+   长度按码点算（2-12 / 1-12）。名牌文字用玩家输入拼 MiniMessage，不拒会让人把组件注入名牌。
+5. **魂符冷却在内存**，重启清零（23.4-2）。
+6. **本轮控制台起服方式**：`exec 3<>cmd.fifo && java ... <&3` 在 Windows/cygwin 下会让
+   `TerminalConsole` 启动时报一次 `IOException: 拒绝访问`，控制台输入不可用但 **RCON 正常**；
+   不是插件问题，历史 P7 日志里没有这条是因为当时用的是有 TTY 的启动方式。
+
+### 23.8 玩家须知（部署时贴到服务器公告）
+
+- 手上拿**食物**右键女仆 = 喂食（涨好感）；拿**魂符**右键 = 召唤；空手右键 = 打开菜单。
+- 战斗模式下她替你打架，**用的就是你塞给她的武器**——玩家型 NPC 走真实玩家逻辑，**武器会掉耐久**，
+  养她请给「无法破坏」词条的装备，或别把家传宝剑给她。
+- 农业/畜牧要她自己有工具和种子/饲料：锄头给主手，种子、小麦、空桶放背包存储格。
+- 好感度到「伙伴」档（默认 40）才能 `/catmaid rename` 与 `/catmaid title`。
+- 她倒下会变成铃铛进你背包，右键铃铛 + 材料（默认 1 颗钻石）就能唤醒；好感度会掉一截。
+- 60 只女仆同服时的 TPS 属服务器实测项，见 23.3-4 的测试流程。

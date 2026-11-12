@@ -961,6 +961,15 @@ combat:
 
 ## Phase 8 — 配置化 / 命令 / 收尾打磨
 
+> **状态：已完成（2026-11-12，服务端验收 2/4 通过，2 项待真人客户端）**。
+> 交接与踩坑见 `docs/api-facts.md` 第 23 节（**接手建议直接读 23.3、23.7**）。
+> 与本节的差异：`performance.behavior-tick-stagger` 只保留配置形状（错峰写在各 Mode 内部，读到 false 会告警）；
+> `/catmaid talisman` 的 24h 冷却记在内存（重启清零）；rename/title 门槛按"伙伴档"而非写死 40；
+> `/catmaid mode` 直接认 `messages.yml` 里的中文模式名（无代码内别名表）；另加了 `general.default-title`。
+> **两条升级必读**：① Paper 的 `reloadConfig()` 会换对象，reload 必须原地覆盖 config（否则"提示成功但行为没变"）；
+> ② `messages.yml` 只补缺键不改旧键，升级到 P8 要删一次 `plugins/CatMaid/messages.yml`，否则 `/catmaid` 帮助还是旧命令表。
+> **待客户端实测**：新玩家全链路、60 只女仆 TPS（无玩家在线时 Citizens 把女仆全 despawn，服务端测不出负载）。
+
 **目标**：管理员工具齐全、全部数值可配、消息外置。
 
 ### /catmaid 命令树（CatMaidCommand，完整实现）
@@ -995,9 +1004,13 @@ combat:
 > 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
 
 - [ ] 新玩家：领魂符 → 召唤 → 喂食涨好感 → 派去种田/放牧/打怪 → 死亡复活全流程无报错
-- [ ] 服务器重启后所有状态（位置/模式/背包/好感度/坐下/存活）完整恢复
+      （各环节 P4–P7 已分别客户端验过，P8 只补命令入口；整链一次跑通待客户端）
+- [x] 服务器重启后所有状态（位置/模式/背包/好感度/坐下/存活）完整恢复
+      （2026-11-12 22:43 实测：好感 60.0 / 模式 COMBAT / 铃铛态 / 装备均按库恢复，启动 0 ERROR）
 - [ ] 60 只女仆同服 TPS ≥ 19.5（行为错峰生效）
-- [ ] `/catmaid admin reload` 后配置与台词即时生效
+      （无玩家在线时 Citizens 会把女仆全 despawn，行为 tick 空转——必须真人客户端在线测，流程见 api-facts 23.3-4）
+- [x] `/catmaid admin reload` 后配置与台词即时生效
+      （实测：`affection.levels` 容量 30→31→32 逐次生效、未改数值时幂等；见 api-facts 23.5）
 
 ---
 
@@ -1026,6 +1039,8 @@ combat:
 | 女仆死亡流程不触发 | **事实**[已实测]：玩家型 NPC 的死亡由 `EntityDamageEvent` 里 `health - finalDamage <= 0` 的**兜底分支**处理——我们收到伤害事件时原版尚未完成死亡（日志顺序：铃铛→倒下→原版死亡消息）。**采用方案**：死亡同时挂 `EntityDamageEvent` 兜底 + `EntityDeathEvent`/`PlayerDeathEvent`，`handleDeath` 用 `maid.isAlive()` 幂等；**不要删兜底那一段**（api-facts 18.3-2） |
 | 掉落的铃铛被火烧掉 / 永久丢人 | **事实**[已实测]：雷击引燃的火几秒就把地上的铃铛烧没了。**采用方案**：`drop()` 给物品实体 `setInvulnerable(true)` + `setGlowing(true)`，岩浆里实测存活（18.3-3） |
 | 无玩家在线导致 tick 计时永远攒不满 | **事实**[已实测]：`/npc spawn` 后约 1 分钟 Citizens 就把 NPC 丢掉，FOLLOW_TICK 这类 5 分钟计时在无客户端环境永远到不了阈值。**采用方案**：计时间隔做成配置项（`affection.follow-tick-interval-seconds`），验收时调短验证机制；真人观感仍需客户端（18.3-4） |
+| `plugin.reloadConfig()` 后"提示成功但行为没变" | **事实**[源码已核]：Paper 的 `JavaPlugin#reloadConfig()` 是 `newConfig = YamlConfiguration.loadConfiguration(configFile)`——**换对象**。`MaidManager`/`AffectionManager`/五个 `BehaviorMode` 都是构造期抓引用，换对象等于它们永远读旧值。**采用方案**（**P8 已落码** `CatMaidCommand#reloadConfigInPlace`）：先清空再逐键 `set` 进当前 `FileConfiguration`，所有持有者立刻生效；`models` 名单与 `nametag.scale/height` 是构造期快照，仍需重启（api-facts 23.3-1） |
+| 升级后 `/catmaid` 帮助还是旧命令表 | **事实**[已实测]：`Messages.mergeMissingKeys` 只补"文件里没有的键"，`help` 这种已存在的列表键不会被更新。**采用方案**：升级到 P8 时删一次 `plugins/CatMaid/messages.yml` 让插件按 jar 模板重建，或手动替换 `help:` 段（api-facts 23.3-2） |
 
 ## 附录 B — 阶段依赖关系
 
