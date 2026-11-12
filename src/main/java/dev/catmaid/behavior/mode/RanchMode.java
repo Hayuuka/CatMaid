@@ -6,12 +6,14 @@ import dev.catmaid.dialogue.AffectionManager;
 import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
+import dev.catmaid.maid.MaidInventory;
 import org.bukkit.DyeColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Cow;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
@@ -82,7 +84,7 @@ public final class RanchMode implements BehaviorMode {
 
     /** 当前这一步要做什么。同一时刻只有一件事，避免导航目标互相打架。 */
     private enum Action {
-        PICKUP, SHEAR
+        PICKUP, SHEAR, MILK
     }
 
     /** 每只女仆的畜牧状态。Mode 是单例，状态必须按女仆分，否则十只会抢同一个目标。 */
@@ -240,6 +242,39 @@ public final class RanchMode implements BehaviorMode {
         if (selectShear(maid, entity, state)) {
             return;
         }
+        selectMilk(maid, entity, state);
+    }
+
+    /**
+     * 找一头能挤的成年牛。前提是背包里有空桶——没桶就不必走过去，走了也是白走。
+     *
+     * <p>挤奶没有任何原版 API 能"替她挤"（javap 已核，{@code Cow} 上没有 milk 方法）：
+     * 空桶换成奶桶这件事只能由我们自己算（见 {@link #milk}）。
+     */
+    private boolean selectMilk(Maid maid, LivingEntity entity, State state) {
+        if (count(maid, Material.BUCKET) <= 0) {
+            return false;
+        }
+        Cow best = null;
+        double bestSq = radiusSq();
+        Location from = entity.getLocation();
+        for (Entity candidate : entity.getWorld().getNearbyEntities(from, radius(), radius(), radius())) {
+            if (!(candidate instanceof Cow cow) || !cow.isAdult() || blacklisted(state, cow.getLocation())) {
+                continue;
+            }
+            double distance = cow.getLocation().distanceSquared(from);
+            if (distance <= bestSq) {
+                bestSq = distance;
+                best = cow;
+            }
+        }
+        if (best == null) {
+            return false;
+        }
+        state.action = Action.MILK;
+        state.target = best;
+        state.lastPos = null;
+        return true;
     }
 
     /** 找一只没剪过的成年羊。剪过的、幼崽都不是目标。 */
@@ -272,6 +307,24 @@ public final class RanchMode implements BehaviorMode {
         return radius * radius;
     }
 
+    /**
+     * 背包存储位里某种材质的总数。
+     *
+     * <p>只数存储位：装备位（0-5）是主人特意放上去的，饲料/桶都不该从那里取材
+     * （与 P5 的 {@code consumeOne} 同一口径）。
+     */
+    private static int count(Maid maid, Material material) {
+        int total = 0;
+        int end = MaidInventory.EQUIPMENT_SLOTS + maid.inventory().storageCapacity();
+        for (int slot = MaidInventory.EQUIPMENT_SLOTS; slot < end; slot++) {
+            ItemStack stack = maid.inventory().get(slot);
+            if (stack != null && stack.getType() == material) {
+                total += stack.getAmount();
+            }
+        }
+        return total;
+    }
+
     /** 当前目标还成立吗。目标被主人牵走、被玩家捡走、羊已经被剪过，都要重新挑。 */
     private boolean stillValid(Maid maid, LivingEntity entity, State state) {
         Entity target = state.target;
@@ -286,6 +339,7 @@ public final class RanchMode implements BehaviorMode {
         }
         return switch (state.action) {
             case SHEAR -> target instanceof Sheep sheep && sheep.isAdult() && !sheep.isSheared();
+            case MILK -> target instanceof Cow cow && cow.isAdult();
             default -> true;
         };
     }
@@ -316,7 +370,29 @@ public final class RanchMode implements BehaviorMode {
         switch (action) {
             case PICKUP -> collect(maid, (Item) target, state);
             case SHEAR -> shear(maid, (Sheep) target);
+            case MILK -> milk(maid, (Cow) target);
         }
+    }
+
+    /**
+     * 挤奶：扣 1 个空桶、给 1 个奶桶（蓝图 P6）。
+     *
+     * <p>先扣桶再加奶：桶扣不掉就说明中途被主人拿走了，这一趟白走（不产出奶，也不报错）。
+     * 奶桶装不下时掉在原地——原版挤奶也是这样掉的。
+     */
+    private void milk(Maid maid, Cow cow) {
+        if (!maid.inventory().consumeOne(Material.BUCKET)) {
+            return;
+        }
+        ItemStack milk = new ItemStack(Material.MILK_BUCKET);
+        int leftover = maid.inventory().addItem(milk);
+        if (leftover > 0) {
+            milk.setAmount(leftover);
+            cow.getWorld().dropItemNaturally(cow.getLocation(), milk);
+        }
+        cow.getWorld().playSound(cow.getLocation(), Sound.ENTITY_COW_MILK, 1f, 1f);
+        maid.stats().addMilk();
+        reward(maid);
     }
 
     /**
