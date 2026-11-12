@@ -1,6 +1,7 @@
 package dev.catmaid.command;
 
 import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.gui.GuiManager;
 import dev.catmaid.maid.AffectionTable;
@@ -64,6 +65,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     private final AffectionManager affection;
     private final DialogueManager dialogue;
     private final NameTagManager nameTags;
+
+    /** 魂符自助领取的冷却：玩家 UUID → 可以再领的时间戳（毫秒）。 */
+    private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
@@ -399,14 +403,62 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "summon" -> summon(sender, args);
             case "remove" -> remove(sender, args);
             case "list" -> list(sender, args);
+            case "setaffection" -> setAffection(sender, args);
             default -> sendHelp(sender);
         }
     }
 
     /**
+     * 设置指定女仆的好感度。走 {@link AffectionManager#apply} 而不是直接改字段：
+     * 背包容量换算、可取消事件、升级特效与台词都挂在那一条链路上，
+     * 绕过它的下场是"面板显示 60，背包还是 27 格"（api-facts 22.3-1）。
+     *
+     * <p>数值上限按 config 的 {@code affection.min/max} 校验，不写死 0..100。
+     */
+    private void setAffection(CommandSender sender, String[] args) {
+        if (args.length < 4) {
+            Messages.send(sender, "setaffection-usage");
+            return;
+        }
+        UUID maidId = parseUuid(args[2]);
+        if (maidId == null || maidManager.byId(maidId).isEmpty()) {
+            Messages.send(sender, "maid-not-found", Map.of("name", args[2]));
+            return;
+        }
+        Maid maid = maidManager.byId(maidId).get();
+        double min = plugin.getConfig().getDouble("affection.min", 0);
+        double max = plugin.getConfig().getDouble("affection.max", 100);
+        double target;
+        try {
+            target = Double.parseDouble(args[3]);
+        } catch (NumberFormatException e) {
+            Messages.send(sender, "affection-invalid",
+                    Map.of("min", fmt(min), "max", fmt(max)));
+            return;
+        }
+        if (target < min || target > max) {
+            Messages.send(sender, "affection-invalid",
+                    Map.of("min", fmt(min), "max", fmt(max)));
+            return;
+        }
+        // delta 传差值：apply 只用 delta，reason 决定事件里的语义（ADMIN 在配置里没有数值键）
+        affection.apply(maid, target - maid.getAffection(), AffectionReason.ADMIN);
+        Messages.send(sender, "affection-set", Map.of(
+                "name", maid.getName(), "value", fmt(maid.getAffection())));
+    }
+
+    private static String fmt(double value) {
+        return String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    /**
      * 发魂符给自己。蓝图 P4 的写法是 {@code [玩家] [数量]}，这里只做自助领取：
-     * 给别人发用原版 /give 即可（物品带 PDC，/give 也能带）
-     * —— 管理员的批量分发留到 P8 的完整命令树。
+     * 给别人发用原版 /give 即可（物品带 PDC，/give 也能带）。
+     *
+     * <p>P8 加了两个闸门（蓝图 P8 命令树：catmaid.use，冷却 24h，config 可关）：
+     * {@code interaction.talisman-enabled} 一键关掉，{@code interaction.talisman-cooldown-hours}
+     * 控制冷却（0 = 不限）。冷却记在内存里，重启就清零——故意的：它不是经济系统，
+     * 记录落库要多一张表，收益不值。
      */
     private void talisman(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
@@ -415,6 +467,19 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
         if (!player.hasPermission("catmaid.use")) {
             Messages.send(player, "no-permission");
+            return;
+        }
+        if (!plugin.getConfig().getBoolean("interaction.talisman-enabled", true)) {
+            Messages.send(player, "talisman-disabled");
+            return;
+        }
+        long cooldownMs = Math.max(0,
+                plugin.getConfig().getLong("interaction.talisman-cooldown-hours", 24)) * 3600_000L;
+        long now = System.currentTimeMillis();
+        long readyAt = talismanReadyAt.getOrDefault(player.getUniqueId(), 0L);
+        if (now < readyAt) {
+            long minutes = Math.max(1, (readyAt - now) / 60_000L);
+            Messages.send(player, "talisman-cooldown", Map.of("minutes", String.valueOf(minutes)));
             return;
         }
         int amount = 1;
@@ -433,6 +498,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
         player.getInventory().addItem(MaidItems.talisman(plugin, material, amount)).values()
                 .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        talismanReadyAt.put(player.getUniqueId(), now + cooldownMs);
         Messages.send(player, "talisman-received", Map.of("amount", String.valueOf(amount)));
     }
 
@@ -586,7 +652,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             return List.of();
         }
         if (args.length == 2) {
-            return filter(List.of("summon", "remove", "list"), args[1]);
+            return filter(List.of("summon", "remove", "list", "setaffection"), args[1]);
         }
         if (args.length == 3) {
             List<String> names = new ArrayList<>();

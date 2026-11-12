@@ -6,6 +6,10 @@ package dev.catmaid.dialogue;
  *
  * <p>{@link #IDLE_LONG} 目前没有触发点：蓝图只在枚举里要求它，触发点表里没有对应条目。
  * 保留它是为了 P5-P7 做「长时间没活干」的衰减时有现成的 reason，不必再改这个枚举。
+ *
+ * <p>{@link #ADMIN} 是 P8 的 {@code /catmaid admin setaffection} 专用：数值由命令直接给定，
+ * 不走 {@code affection.gain/loss}，因此在 AffectionManager 的映射表里对应 {@code null}。
+ * 加枚举值时必须同步那个 switch（它是穷尽式 switch，漏了会编译失败——这是故意的）。
  */
 public enum AffectionReason {
     FEED,
@@ -16,5 +20,6 @@ public enum AffectionReason {
     HURT,
     DEATH,
     REVIVE,
-    IDLE_LONG
+    IDLE_LONG,
+    ADMIN
 }

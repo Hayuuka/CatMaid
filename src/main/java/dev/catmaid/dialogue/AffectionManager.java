@@ -191,7 +191,7 @@ public final class AffectionManager {
             case FOLLOW_TICK -> "follow-tick";
             case HURT -> "hurt";
             case DEATH -> "death";
-            case REVIVE, IDLE_LONG -> null;
+            case REVIVE, IDLE_LONG, ADMIN -> null;
         };
     }
 }

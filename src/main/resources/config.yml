@@ -74,6 +74,10 @@ ranch:
 interaction:
   # 魂符材质（右键召唤）。必须与 /catmaid talisman 发放的物品一致
   talisman-material: AMETHYST_SHARD
+  # 魂符自助领取（/catmaid talisman）：关掉后只能由管理员发放
+  talisman-enabled: true
+  # 自助领取冷却（小时，0 = 不限）。只记在内存里，重启服务器会清零
+  talisman-cooldown-hours: 24
   # 喂食冷却：同一只女仆两次喂食的最小间隔
   feed-cooldown-seconds: 60
   # 可喂的食物（手持其中之一右键女仆 = 喂食，而不是开菜单）

@@ -64,6 +64,15 @@ title-need-affection: "<red>{name} 还不太愿意：好感度到「{level}」�
 title-invalid: "<red>称呼要 1-12 个字，且不能含尖括号、& 和 § 这三个字符。"
 title-success: "<green>{name} 现在叫你「{title}」了。"
 
+# 魂符自助领取的两个闸门（interaction.talisman-enabled / talisman-cooldown-hours）
+talisman-disabled: "<gray>服主关掉了魂符的自助领取，找管理员要吧。"
+talisman-cooldown: "<gray>魂符还没准备好，大约还要 {minutes} 分钟。"
+
+# admin setaffection
+setaffection-usage: "<red>用法：/catmaid admin setaffection <女仆UUID> <数值>"
+affection-invalid: "<red>好感度要在 {min} 到 {max} 之间。"
+affection-set: "<green>已把 {name} 的好感度设为 {value}。"
+
 # ---- Phase 4 养成层 ----
 # 台词聊天行的外观：{name}=女仆名 {line}=台词内容（台词本身来自 dialogue.yml）
 dialogue:
