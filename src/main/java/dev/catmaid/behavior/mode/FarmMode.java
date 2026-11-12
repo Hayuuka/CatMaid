@@ -2,6 +2,8 @@ package dev.catmaid.behavior.mode;
 
 import dev.catmaid.behavior.BehaviorMode;
 import dev.catmaid.behavior.Movement;
+import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
 import org.bukkit.Bukkit;
@@ -25,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 农业：在 home（或自身）周围找成熟作物，走过去收割并补种（蓝图 P5）。
@@ -50,6 +53,8 @@ public final class FarmMode implements BehaviorMode {
     private static final double STUCK_DISTANCE_SQ = 0.25;
     /** 拉黑时长：给主人 30 秒拆掉障碍，之后允许再试一次。 */
     private static final long BLACKLIST_MS = 30_000L;
+    /** 农活台词的触发概率（蓝图 P5：10%）。收一株说一句话会吵，十株一句正好。 */
+    private static final double WORK_LINE_CHANCE = 0.1;
 
     private static final List<String> DEFAULT_CROPS = List.of(
             "WHEAT", "CARROTS", "POTATOES", "BEETROOTS", "NETHER_WART", "COCOA");
@@ -67,13 +72,15 @@ public final class FarmMode implements BehaviorMode {
             Material.COCOA, Material.COCOA_BEANS);
 
     private final FileConfiguration config;
+    private final AffectionManager affection;
     private final DialogueManager dialogue;
     /** 可收割作物。构造时从 config 解析一次：配置改动在 P8 的 reload 之前都要重启才生效。 */
     private final Set<Material> crops = EnumSet.noneOf(Material.class);
     private final Map<UUID, State> states = new HashMap<>();
 
-    public FarmMode(FileConfiguration config, DialogueManager dialogue) {
+    public FarmMode(FileConfiguration config, AffectionManager affection, DialogueManager dialogue) {
         this.config = config;
+        this.affection = affection;
         this.dialogue = dialogue;
         loadCrops();
     }
@@ -254,6 +261,14 @@ public final class FarmMode implements BehaviorMode {
         }
         // 先入包再补种：刚收下来的种子可以直接拿去补，不必等主人塞种子
         replant(block, cropType, harvested, maid);
+
+        // 统计与好感：好感走 apply 是硬规矩（它同时负责事件、等级特效与落库，
+        // 顺手把这一轮收成也存了，见 docs/api-facts.md 18.8）
+        maid.stats().addHarvest();
+        affection.apply(maid, affection.gain(AffectionReason.WORK_HARVEST), AffectionReason.WORK_HARVEST);
+        if (ThreadLocalRandom.current().nextDouble() < WORK_LINE_CHANCE) {
+            dialogue.send(maid, "on_work_done");
+        }
     }
 
     /**
