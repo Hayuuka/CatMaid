@@ -92,6 +92,19 @@ public final class AffectionTable {
         return level;
     }
 
+    /**
+     * 进入该档所需的好感度（第 0 档恒为 0）。
+     *
+     * <p>P8 的 rename/title 要按"档位"放行（蓝图：伙伴档起可改名），提示里又要写出具体数值。
+     * 阈值可配置，所以数值不能写死在代码或 messages.yml 里，只能从这里取。
+     */
+    public static int threshold(int level) {
+        if (level <= 0) {
+            return 0;
+        }
+        return thresholds[Math.min(level, thresholds.length) - 1];
+    }
+
     /** 该等级的存储格数。 */
     public static int capacity(int level) {
         return capacities[Math.max(0, Math.min(level, capacities.length - 1))];

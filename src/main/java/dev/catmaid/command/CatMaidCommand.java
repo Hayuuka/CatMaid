@@ -3,12 +3,14 @@ package dev.catmaid.command;
 import dev.catmaid.dialogue.AffectionManager;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.gui.GuiManager;
+import dev.catmaid.maid.AffectionTable;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
+import net.citizensnpcs.api.npc.NPC;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -23,6 +25,7 @@ import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -43,8 +46,13 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     /** 玩家侧命令认领女仆的半径（蓝图 P8：/catmaid gui 打开"最近一只（或 8 格内）"）。 */
     private static final int NEARBY_RADIUS = 8;
 
-    /** 改名 / 改称呼的好感门槛（蓝图 P4 等级表：伙伴档起解锁改名）。 */
-    private static final int RENAME_MIN_AFFECTION = 40;
+    /**
+     * 改名 / 改称呼解锁的档位（蓝图 P4：伙伴档起，默认即好感 40）。
+     *
+     * <p>这里按"档位"而不是写死 40：阈值能配，服主把伙伴档挪到 35 或 45 时，
+     * 解锁点应当跟着走（数值由 {@link AffectionTable#threshold(int)} 提供）。
+     */
+    private static final int RENAME_MIN_LEVEL = 2;
 
     private static final int NAME_MIN_LENGTH = 2;
     private static final int NAME_MAX_LENGTH = 12;
@@ -80,6 +88,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "gui" -> gui(sender);
             case "mode" -> mode(sender, args);
             case "sethome" -> sethome(sender);
+            case "info" -> info(sender);
+            case "rename" -> rename(sender, args);
+            case "title" -> title(sender, args);
             case "talisman" -> talisman(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
@@ -167,6 +178,143 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 "x", String.valueOf(home.getBlockX()),
                 "y", String.valueOf(home.getBlockY()),
                 "z", String.valueOf(home.getBlockZ())));
+    }
+
+    /**
+     * 列出自己全部女仆：名字 / 模式 / 好感度 / 存活。
+     *
+     * <p>与 admin list 的区别是视角：这里只给自己的，且不带 UUID（玩家不需要）。
+     */
+    private void info(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        List<Maid> owned = maidManager.byOwner(player.getUniqueId());
+        if (owned.isEmpty()) {
+            Messages.send(player, "no-maid");
+            return;
+        }
+        owned.sort(Comparator.comparingDouble(Maid::getAffection).reversed());
+        Messages.send(player, "info-header", Map.of("count", String.valueOf(owned.size())));
+        for (Maid maid : owned) {
+            Messages.send(player, "info-entry", Map.of(
+                    "name", maid.getName(),
+                    "mode", modeName(maid.getMode()),
+                    "affection", String.format(Locale.ROOT, "%.1f", maid.getAffection()),
+                    "state", Messages.plain(maid.isAlive() ? "state-alive" : "state-bell")));
+        }
+    }
+
+    /**
+     * 改名。好感不够（蓝图：伙伴档起）时拒绝，名字要 2-12 字且不能含富文本记号。
+     *
+     * <p>为什么直接拒绝 {@code <} {@code &} {@code §} 而不是"过滤"：这三个字符分别是
+     * MiniMessage、旧颜色码、段落符的入口，玩家把 {@code <click:run_command:...>} 塞进名字
+     * 后名牌会把整段当组件渲染（api-facts 22.3-4）。名字同时是 NPC 名与名牌文字，改完要一起刷。
+     */
+    private void rename(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        if (args.length < 2) {
+            Messages.send(player, "rename-usage");
+            return;
+        }
+        Maid maid = resolveMaid(player);
+        if (maid == null) {
+            return;
+        }
+        if (!canRename(player, maid, "rename")) {
+            return;
+        }
+        String newName = sanitize(args[1], NAME_MIN_LENGTH, NAME_MAX_LENGTH);
+        if (newName == null) {
+            Messages.send(player, "rename-invalid");
+            return;
+        }
+        String oldName = maid.getName();
+        if (newName.equals(oldName)) {
+            Messages.send(player, "rename-same");
+            return;
+        }
+        maid.setName(newName);
+        NPC npc = maid.npc();
+        if (npc != null) {
+            npc.setName(newName); // 与 /npc list、Citizens 存档保持一致，避免两处名字不一样
+        }
+        nameTags.refresh(maid);
+        maidManager.saveAsync(maid);
+        Messages.send(player, "rename-success", Map.of("old", oldName, "name", newName));
+    }
+
+    /** 改女仆对自己的称呼（台词里的 {owner}）。门槛与改名一致。 */
+    private void title(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        if (args.length < 2) {
+            Messages.send(player, "title-usage");
+            return;
+        }
+        Maid maid = resolveMaid(player);
+        if (maid == null) {
+            return;
+        }
+        if (!canRename(player, maid, "title")) {
+            return;
+        }
+        String newTitle = sanitize(args[1], 1, NAME_MAX_LENGTH);
+        if (newTitle == null) {
+            Messages.send(player, "title-invalid");
+            return;
+        }
+        maid.setOwnerTitle(newTitle);
+        maidManager.saveAsync(maid);
+        Messages.send(player, "title-success", Map.of("name", maid.getName(), "title", newTitle));
+    }
+
+    /** rename/title 共用的好感闸门；不够时按前缀发对应的提示（rename-* / title-*）。 */
+    private boolean canRename(Player player, Maid maid, String prefix) {
+        int level = affection.level(maid.getAffection());
+        if (level >= RENAME_MIN_LEVEL) {
+            return true;
+        }
+        Messages.send(player, prefix + "-need-affection", Map.of(
+                "name", maid.getName(),
+                "level", Messages.levelName(RENAME_MIN_LEVEL),
+                "min", String.valueOf(AffectionTable.threshold(RENAME_MIN_LEVEL))));
+        return false;
+    }
+
+    /**
+     * 名字/称呼的合法化：长度按码点算（中文一字一码点，emoji 不会被当成两个字），
+     * 命中禁用字符或长度越界返回 null。
+     */
+    private String sanitize(String raw, int min, int max) {
+        String trimmed = raw.trim();
+        int length = trimmed.codePointCount(0, trimmed.length());
+        if (length < min || length > max) {
+            return null;
+        }
+        if (trimmed.indexOf('<') >= 0 || trimmed.indexOf('&') >= 0 || trimmed.indexOf('§') >= 0) {
+            return null;
+        }
+        return trimmed;
     }
 
     /**
@@ -416,6 +564,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 subs.add("gui");
                 subs.add("mode");
                 subs.add("sethome");
+                subs.add("info");
+                subs.add("rename");
+                subs.add("title");
                 subs.add("talisman");
             }
             if (sender.hasPermission("catmaid.admin")) {
