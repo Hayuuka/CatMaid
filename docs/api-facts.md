@@ -2,7 +2,7 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-12（Phase 5 收口 + 窗口复核）
+> 最后更新：2026-11-12（Phase 5 收口 + 窗口复核 + P6 开工清单 19.9）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
@@ -12,7 +12,7 @@
 **Phase 4 状态：已完成并收口**（蓝图验收 7/7，服务端 4 项 + 服主客户端 3 项；养成数值全部配置化。
 详见第 18 节，**接手 P5 前读 18.3 / 18.9 / 18.11**）。
 **Phase 5 状态：已完成并收口**（服务端验收 5/5，观感项待客户端；窗口复核 2 条冲突均保守解决，
-详见第 19 节，**接手 P6 前读 19.6、19.7 与 19.8**）。
+详见第 19 节，**接手 P6 前读 19.6、19.7、19.8，开工照 19.9**）。
 
 Phase 0 的四条关键结论：
 1. 挂模型用 `ModelTrait#setRenderer(BetterModel.modelOrNull(id))`，**没有 `setModel`**（3.1）。
@@ -1517,3 +1517,69 @@ P5 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 5 项服务�
 对后续阶段的唯一影响：**P6 勿再照抄蓝图 P5 伪代码中 `breakNaturally` 返回掉落列表的写法**
 （18.11 第 2 条已作废），捡拾/剪毛复用 19.7-4 的 `getDrops` + "目标 + 卡死 + 拉黑"三件套。
 blueprint.md 已同步：Phase 5 状态行补窗口复核注记、附录 A 新增 breakNaturally/BlockPos 风险行。
+
+### 19.9 P6（畜牧模式）开工清单
+
+**必读**：19.3（RCON 查方块/造满包的办法）、19.6（`breakNaturally` 别照抄）、19.7-4（可复用的四样东西）、
+以及下面第 2 条——**蓝图 P6 伪代码里又有两处 API 已经不成立**，先看再动手。
+
+#### 1. 落点
+新建 `behavior/mode/RanchMode implements BehaviorMode`，在 `BehaviorManager` 构造里
+`modes.put(Maid.Mode.RANCH, new RanchMode(config, affection, dialogue))`；
+接上后降级 fallback 里只剩 `COMBAT`（P7）。
+
+#### 2. 蓝图 P6 伪代码与实际 API 的偏差（[JAR] 已核，写代码前先改口径）
+- **`animals.setLoveMode(600)` 不存在了。** 26.2 的 `Animals` 提供
+  `boolean isLoveMode()` / `int getLoveModeTicks()` / `void setLoveModeTicks(int)`；
+  更贴合"让它进入求偶"的语义的是 `Breedable#setBreed(boolean)`（`Breedable extends Ageable`，
+  `canBreed()` 是闸门）。建议：`setBreed(true)` + 用 `setLoveModeTicks(600)` 只在需要控时长时用。
+- **捡拾判定的字段名要换**：蓝图写 `age>10tick`，实际是 `Entity#getTicksLived() > 10`；
+  再叠加 `Item#getPickupDelay() <= 0`、`Item#canMobPickup()`。**外加 `Item#getOwner()`**：
+  玩家刚丢的东西 owner 就是那个玩家，别去抢（蓝图"10 tick 内不抢"的意图其实是这条）。
+- **顺手可省一张表**：`Animals#isBreedItem(ItemStack)` 能直接判断"这食物能不能喂它"，
+  `ranch.breed-food` 就只用来覆盖特例（比如狼用骨头、马用金胡萝卜），不必把 7 种动物全配一遍。
+
+#### 3. 现成能力（别重造）
+- 状态三件套照搬 `FarmMode.State`：`target + lastPos/lastProgressAt + blacklist`，8 秒放弃、30 秒拉黑；
+- `Movement.navigate/stop/isNavigating/arrived`（`arrived` 已在 P5 有调用点）；
+- `maid.inventory().addItem(stack)` 返回**剩余数量**（0 = 全进包），余量非空就掉原地；
+- `maid.inventory().consumeOne(Material)`（P5 新增，挤奶扣桶、喂食扣饲料都用它）；
+- `affection.apply(maid, affection.gain(AffectionReason.WORK_BREED), WORK_BREED)` +
+  `maid.stats().addBreed()/addShear()/addMilk()`；
+- `dialogue.send(maid, "on_work_done")`；`dialogue.send(maid, key, subKey)` 走二级键。
+
+#### 4. 需要新写的
+- **挤奶没有任何 API 帮你完成**（`Cow` 上没有 milk 方法，javap 已核）：只能
+  `consumeOne(BUCKET)` → `addItem(new ItemStack(MILK_BUCKET))` → 播 `Sound.ENTITY_COW_MILK`。
+- **剪羊毛材质**：`Colorable#getColor()` 拿 `DyeColor`，再
+  `Material.matchMaterial(color.name() + "_WOOL")`（`LIGHT_BLUE` → `LIGHT_BLUE_WOOL` 成立）。
+- **饲料耗尽提示**：`dialogue.yml` 需要新增键（如 `on_no_food`），P6 记得加；
+  `DialogueManager.send` 对不存在的键是**静默丢弃**，很容易以为接线没生效。
+- **`ranch` 配置段**：`radius` / `pickup` / `action-priority` / `breed-food`。
+  配置对象在 onEnable 读入内存，改完仍要重启（P8 才做 reload）。
+
+#### 5. 踩坑预告
+1. **节奏要拆开**：蓝图把"捡拾"和"决策"写在同一个 tick 里，但捡拾应该是高频（每 10 tick 错峰）、
+   决策是 30 tick。合成一个频率的话鸡蛋要在地上躺 1.5 秒，观感上像"她没看见"。
+2. **`getNearbyEntities` 只许出现在 Mode 的节流 tick 内**（agent.md 7.4），不要放监听器。
+3. **繁殖要先判"两只都成年且 `canBreed()`"**，否则她会对着小牛/冷却中的牛一直喂小麦。
+4. **动作冷却 2 秒用 `Map<UUID, Long>` 记时间戳**，别用 tick 取模——各女仆错峰相位不同。
+5. **一次只捡一件**，别把整堆 item 一口吞：`addItem` 有余量就把余量留在原地（或直接跳过这件），
+   否则满包时会反复"删了又掉"。
+
+#### 6. 验收准备（服务端可自动化）
+```bash
+# 两只成年牛（分开几格，避免重叠导致"最近的一对"判定怪）
+python tools/rcon.py "summon cow 19 72 2" "summon cow 21 72 4"
+# 有毛羊（颜色参数：14 = 红）
+python tools/rcon.py "summon sheep 15 72 5 {Color:14}"
+# 女仆背包塞小麦/空桶：DB 里复制 maid_items 的 blob（做法见 19.3-3），或用 P2 的 GUI 手动放
+# 无玩家在线时先叫出来
+python tools/rcon.py "npc spawn 25"
+```
+验收对照蓝图 P6 五项：繁殖（双红心 + 小麦减少）、剪毛（颜色正确 + 羊变裸）、挤奶（桶→奶桶）、
+捡拾（鸡蛋/羊毛入包、玩家刚丢的不抢）、饲料耗尽（停手 + 只说一次台词）。
+
+#### 7. 基线
+P5 收口提交 `4685951`（已推送）。P6 从这一版开分支/直推 `main` 都行，唯一的强约束是
+**别再照抄蓝图 P5/P6 伪代码里的 API 写法**——两份伪代码各有一处已经和 26.2 不一致了。
