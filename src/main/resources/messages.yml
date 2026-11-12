@@ -28,6 +28,8 @@ state-bell: "<gray>铃铛"
 help:
   - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> 当前可用命令："
   - "<gray>/catmaid gui <dark_gray>—</dark_gray> 打开最近一只女仆的菜单"
+  - "<gray>/catmaid mode <模式> <dark_gray>—</dark_gray> 切换她的工作模式"
+  - "<gray>/catmaid sethome <dark_gray>—</dark_gray> 把脚下设为她的家"
   - "<gray>/catmaid talisman [数量] <dark_gray>—</dark_gray> 领几张魂符"
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
@@ -37,6 +39,13 @@ help:
 # 玩家侧命令找不到女仆时的两种提示
 no-maid: "<red>你还没有女仆。手持魂符右键，召唤一只吧。"
 no-maid-nearby: "<red>附近（{radius} 格内）没有你的女仆。"
+
+# ---- Phase 8 玩家侧命令 ----
+mode-usage: "<red>用法：/catmaid mode <闲置|跟随|战斗|农业|畜牧>"
+mode-invalid: "<red>没有这种模式：{mode}（可选：闲置、跟随、战斗、农业、畜牧）"
+mode-already: "<gray>{name} 已经是「{mode}」模式了。"
+mode-changed: "<green>已把 {name} 的模式换成「{mode}」。"
+home-set: "<green>已把 {name} 的家设在 {x}, {y}, {z}。"
 
 # ---- Phase 4 养成层 ----
 # 台词聊天行的外观：{name}=女仆名 {line}=台词内容（台词本身来自 dialogue.yml）

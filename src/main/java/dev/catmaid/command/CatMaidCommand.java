@@ -78,6 +78,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
             case "gui" -> gui(sender);
+            case "mode" -> mode(sender, args);
+            case "sethome" -> sethome(sender);
             case "talisman" -> talisman(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
@@ -102,6 +104,94 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             return; // resolveMaid 已经给过提示
         }
         gui.openMain(player, maid);
+    }
+
+    /**
+     * 切换最近女仆的模式。与 GUI 里的模式页是同一条链路：改字段 → 落库 → 模式台词 → 提示。
+     *
+     * <p>台词这句不能省：蓝图 P4 规定模式切换要有反应，GUI 那条路已经接了，
+     * 命令行不补就会出现"点界面她说话、打命令她不理"（P2 的代码里留了这条提醒）。
+     */
+    private void mode(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        if (args.length < 2) {
+            Messages.send(player, "mode-usage");
+            return;
+        }
+        Maid.Mode target = parseMode(args[1]);
+        if (target == null) {
+            Messages.send(player, "mode-invalid", Map.of("mode", args[1]));
+            return;
+        }
+        Maid maid = resolveMaid(player);
+        if (maid == null) {
+            return;
+        }
+        String display = modeName(target);
+        if (maid.getMode() == target) {
+            Messages.send(player, "mode-already", Map.of("name", maid.getName(), "mode", display));
+            return;
+        }
+        maid.setMode(target);
+        maidManager.saveAsync(maid);
+        dialogue.send(maid, "on_mode_change", target.name());
+        Messages.send(player, "mode-changed", Map.of("name", maid.getName(), "mode", display));
+    }
+
+    /** 把脚下位置设为最近女仆的家（农业模式 center=home、回家闲逛都看这个点）。 */
+    private void sethome(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        Maid maid = resolveMaid(player);
+        if (maid == null) {
+            return;
+        }
+        Location home = player.getLocation().clone();
+        maid.setHome(home);
+        maidManager.saveAsync(maid);
+        Messages.send(player, "home-set", Map.of(
+                "name", maid.getName(),
+                "x", String.valueOf(home.getBlockX()),
+                "y", String.valueOf(home.getBlockY()),
+                "z", String.valueOf(home.getBlockZ())));
+    }
+
+    /**
+     * 模式名的解析：先认枚举名（idle/follow/...），再认 {@code messages.yml} 里的中文显示名。
+     *
+     * <p>为什么要读 messages 而不是在代码里写死中文别名：服主把「农业」改成「种田」后，
+     * 命令输入、GUI 按钮、提示文案应当一起变；写死别名就会出现"界面叫种田、命令只认农业"。
+     */
+    private Maid.Mode parseMode(String raw) {
+        for (Maid.Mode mode : Maid.Mode.values()) {
+            if (mode.name().equalsIgnoreCase(raw)) {
+                return mode;
+            }
+        }
+        for (Maid.Mode mode : Maid.Mode.values()) {
+            if (modeName(mode).equalsIgnoreCase(raw)) {
+                return mode;
+            }
+        }
+        return null;
+    }
+
+    /** 模式的玩家可见名（messages.yml 的 {@code gui.mode-<枚举名小写>}）。 */
+    private String modeName(Maid.Mode mode) {
+        return Messages.plain("gui.mode-" + mode.name().toLowerCase(Locale.ROOT));
     }
 
     /**
@@ -324,6 +414,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             List<String> subs = new ArrayList<>();
             if (sender.hasPermission("catmaid.use")) {
                 subs.add("gui");
+                subs.add("mode");
+                subs.add("sethome");
                 subs.add("talisman");
             }
             if (sender.hasPermission("catmaid.admin")) {
@@ -331,7 +423,15 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             }
             return filter(subs, args[0]);
         }
-        if (!sender.hasPermission("catmaid.admin")) {
+        // 玩家侧命令的参数补全要排在 admin 闸门之前，否则普通玩家敲 /catmaid mode <tab> 什么都看不到
+        if (args[0].equalsIgnoreCase("mode") && args.length == 2) {
+            List<String> modeNames = new ArrayList<>();
+            for (Maid.Mode mode : Maid.Mode.values()) {
+                modeNames.add(modeName(mode));
+            }
+            return filter(modeNames, args[1]);
+        }
+        if (!args[0].equalsIgnoreCase("admin") || !sender.hasPermission("catmaid.admin")) {
             return List.of();
         }
         if (args.length == 2) {
