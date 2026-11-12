@@ -18,6 +18,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -45,6 +46,8 @@ public final class NameTagManager {
 
     /** maidId → TextDisplay 的实体 UUID。 */
     private final Map<UUID, UUID> displays = new HashMap<>();
+    /** maidId → 上次写进名牌的好感等级：等级变了才重设文本，免得每 tick 刷一遍组件。 */
+    private final Map<UUID, Integer> renderedLevels = new HashMap<>();
     private int ticker;
 
     public NameTagManager(Plugin plugin, FileConfiguration config) {
@@ -98,6 +101,11 @@ public final class NameTagManager {
                 return;
             }
             displays.put(maid.getId(), display.getUniqueId());
+            renderedLevels.put(maid.getId(), level(maid));
+        } else if (renderedLevels.getOrDefault(maid.getId(), -1) != level(maid)) {
+            // 好感度过档才换名字颜色（蓝图 P8：灰→白→黄→粉→红），不必每 tick 重设文本
+            display.text(text(maid));
+            renderedLevels.put(maid.getId(), level(maid));
         }
         display.teleport(targetLocation(entity));
     }
@@ -124,15 +132,17 @@ public final class NameTagManager {
         });
     }
 
-    /** 女仆改名 / 换主人后刷新文字。 */
+    /** 女仆改名 / 换主人后刷新文字（颜色也会跟着当前好感等级重算）。 */
     public void refresh(Maid maid) {
         TextDisplay display = find(maid);
         if (display != null) {
             display.text(text(maid));
+            renderedLevels.put(maid.getId(), level(maid));
         }
     }
 
     public void remove(Maid maid) {
+        renderedLevels.remove(maid.getId());
         UUID displayId = displays.remove(maid.getId());
         if (displayId == null) {
             return;
@@ -151,6 +161,7 @@ public final class NameTagManager {
             }
         }
         displays.clear();
+        renderedLevels.clear();
     }
 
     private void removeOrphans(Set<UUID> live) {
@@ -187,7 +198,27 @@ public final class NameTagManager {
     private Component text(Maid maid) {
         return Messages.get("nametag.format", Map.of(
                 "owner", ownerName(maid),
-                "name", maid.getName()));
+                "name", coloredName(maid)));
+    }
+
+    /**
+     * 名字按好感等级上色（蓝图 P8 打磨项：灰→白→黄→粉→红）。
+     *
+     * <p>颜色模板在 messages.yml 的 {@code nametag.name-colors}（0 起，档数不够时取最后一档），
+     * 之所以先拼字符串再整体解析：{@code nametag.format} 里还有 {owner} 的标签，
+     * 分两次解析会让嵌套标签互相打断。
+     */
+    private String coloredName(Maid maid) {
+        List<String> colors = Messages.rawList("nametag.name-colors");
+        if (colors.isEmpty()) {
+            return maid.getName();
+        }
+        String template = colors.get(Math.min(level(maid), colors.size() - 1));
+        return template.replace("{name}", maid.getName());
+    }
+
+    private static int level(Maid maid) {
+        return AffectionTable.level(maid.getAffection());
     }
 
     private String ownerName(Maid maid) {

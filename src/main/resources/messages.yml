@@ -16,9 +16,17 @@ remove-success: "<yellow>已送走女仆 {name}。"
 maid-not-found: "<red>找不到这个女仆：{name}"
 not-your-maid: "<red>她不是你的女仆哦。"
 
-# 头顶名牌（TextDisplay）。{owner}=主人游戏名（取不到时回落为"主人"） {name}=女仆名
+# 头顶名牌（TextDisplay）。{owner}=主人游戏名（取不到时回落为"主人"） {name}=女仆名（已按等级上色）
 nametag:
-  format: "<gray>[<white>{owner}</white>]</gray> <light_purple>{name}</light_purple>"
+  format: "<gray>[<white>{owner}</white>]</gray> {name}"
+  # 名字颜色随好感度等级变化（0 起：陌生人→熟识→伙伴→挚爱→羁绊）。
+  # 档数比等级少时取最后一档；改名后名牌与这里都立即刷新。
+  name-colors:
+    - "<gray>{name}</gray>"
+    - "<white>{name}</white>"
+    - "<yellow>{name}</yellow>"
+    - "<light_purple>{name}</light_purple>"
+    - "<red>{name}</red>"
 
 list-header: "<light_purple>女仆列表（共 {count} 只）："
 list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"

@@ -114,6 +114,16 @@ public final class Messages {
         return getList(key, Map.of());
     }
 
+    /**
+     * 取原始字符串列表（不解析 MiniMessage）。
+     *
+     * <p>给"把一段模板拼进另一段模板"的场景用：名牌名字颜色是 5 条带 {@code {name}} 的模板，
+     * 先拼成一段再交给 {@link #get} 统一解析，否则两层标签会各自解析、嵌套关系被破坏。
+     */
+    public static List<String> rawList(String key) {
+        return config == null ? List.of() : config.getStringList(key);
+    }
+
     /** 列表型文案（GUI 的 lore）；占位符同样在解析前替换。 */
     public static List<Component> getList(String key, Map<String, String> placeholders) {
         List<Component> lines = new ArrayList<>();

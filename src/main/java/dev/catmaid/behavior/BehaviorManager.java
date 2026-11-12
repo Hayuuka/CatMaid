@@ -44,6 +44,12 @@ public final class BehaviorManager {
         this.animator = animator;
         this.affection = affection;
         this.dialogue = dialogue;
+        // config 的这个键目前只是形状（蓝图 P8 要求存在）：错峰写在五个 Mode 与 NameTagManager 内部，
+        // 关掉它等于让 60 只女仆挤在同一 tick 扫方块/寻路。读到 false 时明确告警，而不是静默忽略。
+        if (!config.getBoolean("performance.behavior-tick-stagger", true)) {
+            org.bukkit.Bukkit.getLogger().warning(
+                    "[CatMaid] performance.behavior-tick-stagger=false 暂不支持（错峰在各 Mode 内部），已按 true 处理");
+        }
         IdleMode idle = new IdleMode(config);
         modes.put(Maid.Mode.IDLE, idle);
         // 主人不在线时 FollowMode 会把女仆交给 IdleMode，两者共用一个实例（它自己没有状态）

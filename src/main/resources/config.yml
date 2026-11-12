@@ -19,6 +19,16 @@ names:
   - 小铃
   - 汐音
 
+# ---- Phase 8 性能 ----
+performance:
+  # 全局女仆上限（含铃铛态）。召唤时校验：数量到达上限就拒绝新的召唤。
+  # 压测 60 只时注意这里是 >= 判定——第 60 只就会失败，见 docs/api-facts.md 22.3-5
+  global-maid-cap: 60
+  # 行为 tick 错峰：各 Mode 与名牌跟随按 npcId 取模分摊到不同 tick。
+  # 目前实现是无条件错峰（错峰写在五个 Mode 与 NameTagManager 内部），读到 false 只会打一条告警，
+  # 键位保留以满足蓝图 P8 的配置形状；真要关掉得改 Mode，见 docs/api-facts.md 第 23 节
+  behavior-tick-stagger: true
+
 # 头顶名牌。
 # BetterModel 接管原版实体渲染后，原版名牌会一起被隐藏，所以这里用独立的 TextDisplay 悬浮显示。
 nametag:
