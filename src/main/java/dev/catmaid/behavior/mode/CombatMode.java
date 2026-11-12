@@ -9,12 +9,18 @@ import dev.catmaid.maid.Maid;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.AbstractArrow;
+import org.bukkit.entity.Arrow;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BlockVector;
+import org.bukkit.util.Vector;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -59,6 +65,12 @@ public final class CombatMode implements BehaviorMode {
     private static final float MIN_ATTACK_STRENGTH = 0.9f;
     /** 打完一只偶尔说一句（与农业/畜牧同口径：十次一句，不至于碎碎念）。 */
     private static final double WORK_LINE_CHANCE = 0.1;
+    /** 箭的初速。蓝图给 2.0（原版满蓄力约 3.0）：15 格外会明显下坠，调不准先改这里。 */
+    private static final float ARROW_SPEED = 2.0f;
+    /** 散布是角度（度），不是比例；6 度在中距离已经比较散。 */
+    private static final float ARROW_SPREAD = 6f;
+    /** 箭出生点往前挪半格，避开她自己的碰撞箱。 */
+    private static final double ARROW_SPAWN_OFFSET = 0.5;
 
     private final FileConfiguration config;
     private final AffectionManager affection;
@@ -239,9 +251,13 @@ public final class CombatMode implements BehaviorMode {
 
     // ---- 交战 ----
 
-    /** 有目标：够得着就砍，够不着就走过去。 */
+    /** 有目标：拿弓就放箭，否则近战。 */
     private void engage(Maid maid, LivingEntity entity, State state) {
         LivingEntity target = state.target;
+        if (ranged(maid)) {
+            engageRanged(maid, entity, state);
+            return;
+        }
         if (!Movement.arrived(entity, target.getLocation(), MELEE_REACH)) {
             chase(maid, entity, state, target.getLocation());
             return;
@@ -261,6 +277,71 @@ public final class CombatMode implements BehaviorMode {
         // 原版手臂动画，模型盖住实体后未必可见；命中与伤害不受影响
         entity.swingMainHand();
         state.nextAttackAt = now + attackIntervalMs();
+    }
+
+    /**
+     * 远程：站定放箭，没到射程/没视线就走过去。
+     *
+     * <p>蓝图的"拉开/接近到射程"只做了接近这一半：目标贴脸时往后撤会让僵尸追着她跑，
+     * 观感更像逃跑。射程内就地射，Simple。
+     */
+    private void engageRanged(Maid maid, LivingEntity entity, State state) {
+        LivingEntity target = state.target;
+        Location from = entity.getLocation();
+        double range = rangedRange();
+        boolean inRange = from.getWorld().equals(target.getWorld())
+                && from.distanceSquared(target.getLocation()) <= range * range
+                && entity.hasLineOfSight(target);
+        if (!inRange) {
+            chase(maid, entity, state, target.getLocation());
+            return;
+        }
+        Movement.stop(maid);
+        face(maid, target);
+
+        long now = System.currentTimeMillis();
+        if (now < state.nextAttackAt) {
+            return;
+        }
+        shoot(entity, target);
+        entity.swingMainHand();
+        state.nextAttackAt = now + attackIntervalMs();
+    }
+
+    /**
+     * 放一箭。
+     *
+     * <p>箭从眼前半个身位出生：直接生在眼睛位置会被她自己的碰撞箱挡住（箭原地落地）。
+     * {@code setShooter} 让伤害归属到她头上（原版会据此记击杀、算击退）。
+     *
+     * <p>箭设 {@code CREATIVE_ONLY}：她的背包里没有箭，射出的箭被别人白捡一支很怪。
+     */
+    private void shoot(LivingEntity shooter, LivingEntity target) {
+        Location eye = shooter.getEyeLocation();
+        Vector direction = target.getEyeLocation().toVector().subtract(eye.toVector());
+        if (direction.lengthSquared() < 1.0E-6) {
+            return;
+        }
+        direction.normalize();
+        Location spawn = eye.clone().add(direction.clone().multiply(ARROW_SPAWN_OFFSET));
+        Arrow arrow = eye.getWorld().spawnArrow(spawn, direction, ARROW_SPEED, ARROW_SPREAD);
+        arrow.setShooter(shooter);
+        arrow.setDamage(config.getDouble("combat.arrow-damage", 5.0));
+        arrow.setPickupStatus(AbstractArrow.PickupStatus.CREATIVE_ONLY);
+        eye.getWorld().playSound(eye, Sound.ENTITY_ARROW_SHOOT, 1f, 1f);
+    }
+
+    /** 主手是弓/弩且配置允许才算远程。 */
+    private boolean ranged(Maid maid) {
+        if (!config.getBoolean("combat.ranged-enabled", true)) {
+            return false;
+        }
+        ItemStack weapon = maid.inventory().getMainHand();
+        if (weapon == null) {
+            return false;
+        }
+        Material type = weapon.getType();
+        return type == Material.BOW || type == Material.CROSSBOW;
     }
 
     private void chase(Maid maid, LivingEntity entity, State state, Location target) {
@@ -335,6 +416,10 @@ public final class CombatMode implements BehaviorMode {
 
     private double loseDistance() {
         return Math.max(1, config.getDouble("combat.lose-dist", 20));
+    }
+
+    private double rangedRange() {
+        return Math.max(3, config.getDouble("combat.ranged-range", 15));
     }
 
     private long attackIntervalMs() {
