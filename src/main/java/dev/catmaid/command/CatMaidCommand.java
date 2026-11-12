@@ -430,7 +430,13 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         dialogue.reload();
         for (Maid maid : maidManager.all()) {
             // 同一数值再 set 一次：setAffection 是容量的唯一同步点，reload 后靠它把新容量灌进去
+            int before = maid.inventory().storageCapacity();
             maid.setAffection(maid.getAffection());
+            int after = maid.inventory().storageCapacity();
+            if (before != after) {
+                plugin.getLogger().info(maid.getName() + " 背包容量 "
+                        + before + " → " + after + "（reload 后按新等级表刷新）");
+            }
         }
         Messages.send(sender, "reload-done");
         plugin.getLogger().info("配置与台词已重载，已按新的等级表刷新 "

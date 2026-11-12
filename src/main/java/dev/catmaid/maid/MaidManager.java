@@ -198,6 +198,8 @@ public final class MaidManager {
         maid.setModelId(resolvedModel);
         maid.setMode(Maid.Mode.FOLLOW);
         maid.setAffection(config.getDouble("general.initial-affection", 10));
+        // 默认称呼可配：她开口第一句就是"主人"，服主可能想换成"姐姐"之类的（P8 文案外置）
+        maid.setOwnerTitle(config.getString("general.default-title", "主人"));
         maid.setHome(spawn);
         maid.setAlive(true);
         maid.setMaxHealth(maxHealth());

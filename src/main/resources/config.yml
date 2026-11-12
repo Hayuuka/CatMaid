@@ -2,6 +2,8 @@
 general:
   max-per-player: 2
   initial-affection: 10
+  # 新女仆对主人的默认称呼（可用 /catmaid title 改；台词里的 {owner} 就是这个）
+  default-title: 主人
 
 # 女仆模型池：召唤时若未指定模型，从这里随机取一个
 # 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致
