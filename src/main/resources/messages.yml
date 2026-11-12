@@ -37,6 +37,8 @@ help:
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
   - "<gray>/catmaid admin remove <玩家|女仆UUID>"
+  - "<gray>/catmaid admin setaffection <女仆UUID> <数值>"
+  - "<gray>/catmaid admin reload <dark_gray>—</dark_gray> 重载 config 与台词"
   - "<dark_gray>手持魂符右键 = 召唤；手持食物右键女仆 = 喂食；右键女仆 = 打开菜单。"
 
 # 玩家侧命令找不到女仆时的两种提示
@@ -72,6 +74,7 @@ talisman-cooldown: "<gray>魂符还没准备好，大约还要 {minutes} 分钟�
 setaffection-usage: "<red>用法：/catmaid admin setaffection <女仆UUID> <数值>"
 affection-invalid: "<red>好感度要在 {min} 到 {max} 之间。"
 affection-set: "<green>已把 {name} 的好感度设为 {value}。"
+reload-done: "<green>配置与台词已重新加载（models 名单与名牌尺寸需要重启才生效）。"
 
 # ---- Phase 4 养成层 ----
 # 台词聊天行的外观：{name}=女仆名 {line}=台词内容（台词本身来自 dialogue.yml）

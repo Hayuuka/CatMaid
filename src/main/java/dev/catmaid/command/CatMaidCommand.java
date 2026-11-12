@@ -20,11 +20,14 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -404,7 +407,55 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "remove" -> remove(sender, args);
             case "list" -> list(sender, args);
             case "setaffection" -> setAffection(sender, args);
+            case "reload" -> reload(sender);
             default -> sendHelp(sender);
+        }
+    }
+
+    /**
+     * 重载 config 与台词（蓝图 P8：{@code /catmaid admin reload} 后配置与台词即时生效）。
+     *
+     * <p>三个动作的顺序是硬性的（api-facts 22.3-2）：等级表 → 文案 → 台词。
+     * 反过来会出现"好感变了但背包容量没变"——容量只在 {@code Maid#setAffection} 时同步，
+     * reload 不补历史女仆，所以最后还要把每只女仆的容量按新表刷一遍。
+     *
+     * <p>改不动的部分（需要重启）：{@code models} 名单（ModelRegistry 是启动快照）、
+     * {@code nametag.*} 的缩放与高度（NameTagManager 构造时读取）。
+     */
+    private void reload(CommandSender sender) {
+        reloadConfigInPlace();
+        AffectionTable.load(plugin.getConfig(), plugin.getLogger());
+        // Messages 存着插件的 JavaPlugin 引用，reload() 会连"补齐缺失键"一起重做
+        Messages.reload();
+        dialogue.reload();
+        for (Maid maid : maidManager.all()) {
+            // 同一数值再 set 一次：setAffection 是容量的唯一同步点，reload 后靠它把新容量灌进去
+            maid.setAffection(maid.getAffection());
+        }
+        Messages.send(sender, "reload-done");
+        plugin.getLogger().info("配置与台词已重载，已按新的等级表刷新 "
+                + maidManager.all().size() + " 只女仆的背包容量");
+    }
+
+    /**
+     * 把 config.yml 的值原地覆盖进插件的 FileConfiguration。
+     *
+     * <p>为什么不用 {@code plugin.reloadConfig()}：Paper 的实现是
+     * {@code newConfig = YamlConfiguration.loadConfiguration(...)}——它换的是对象，
+     * 而 MaidManager / AffectionManager / 五个 BehaviorMode 在构造时就抓住了旧引用，
+     * 换对象等于"提示重载成功，但行为一点没变"。原地覆盖则所有持有者立刻看到新值。
+     */
+    private void reloadConfigInPlace() {
+        FileConfiguration live = plugin.getConfig();
+        YamlConfiguration fresh = YamlConfiguration.loadConfiguration(
+                new File(plugin.getDataFolder(), "config.yml"));
+        for (String key : List.copyOf(live.getKeys(true))) {
+            live.set(key, null);
+        }
+        for (String key : fresh.getKeys(true)) {
+            if (!fresh.isConfigurationSection(key)) {
+                live.set(key, fresh.get(key));
+            }
         }
     }
 
@@ -652,7 +703,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             return List.of();
         }
         if (args.length == 2) {
-            return filter(List.of("summon", "remove", "list", "setaffection"), args[1]);
+            return filter(List.of("summon", "remove", "list", "setaffection", "reload"), args[1]);
         }
         if (args.length == 3) {
             List<String> names = new ArrayList<>();
