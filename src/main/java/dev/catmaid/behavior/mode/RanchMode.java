@@ -120,6 +120,8 @@ public final class RanchMode implements BehaviorMode {
         private long nextActionAt;
         /** 走不过去的位置 → 解禁时间戳。物品原地不动、动物被栅栏困住时都靠它止损。 */
         private final Map<BlockVector, Long> blacklist = new HashMap<>();
+        /** 已经喊过"没饲料"了。只有补给到位（再次成功选中）才复位，免得每次决策都念一遍。 */
+        private boolean warnedNoFood;
     }
 
     @Override
@@ -300,6 +302,7 @@ public final class RanchMode implements BehaviorMode {
         Animals second = null;
         Material chosen = null;
         double bestScore = Double.MAX_VALUE;
+        boolean starved = false;
         for (List<Animals> group : groups.values()) {
             if (group.size() < 2) {
                 continue;
@@ -309,6 +312,8 @@ public final class RanchMode implements BehaviorMode {
             Animals b = group.get(1);
             Material food = foodFor(maid, a);
             if (food == null || count(maid, food) < 2) {
+                // 有对象却没饲料：记一笔，全部落空后只提醒一次（蓝图验收项）
+                starved = true;
                 continue;
             }
             double score = a.getLocation().distanceSquared(from) + b.getLocation().distanceSquared(from);
@@ -320,8 +325,13 @@ public final class RanchMode implements BehaviorMode {
             }
         }
         if (first == null) {
+            if (starved) {
+                warnNoFood(maid, state);
+            }
             return false;
         }
+        // 有饲料了：把"喊过没饲料"的闸门复位，下次再耗尽还能提醒一次
+        state.warnedNoFood = false;
         state.action = Action.BREED;
         state.target = first;
         state.partner = second;
@@ -353,6 +363,20 @@ public final class RanchMode implements BehaviorMode {
             }
         }
         return null;
+    }
+
+    /**
+     * 饲料耗尽的提醒：每只女仆只说一次。
+     *
+     * <p>放在"确实有对象却喂不了"的路径上，不是"没饲料就喊"——牧场里没有牛的时候她不该念叨饲料。
+     * 台词键 {@code on_no_food} 在 {@code DialogueManager} 里找不到是静默丢弃的，改 dialogue.yml 时别拼错。
+     */
+    private void warnNoFood(Maid maid, State state) {
+        if (state.warnedNoFood) {
+            return;
+        }
+        state.warnedNoFood = true;
+        dialogue.send(maid, "on_no_food");
     }
 
     /**
