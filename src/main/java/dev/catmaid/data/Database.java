@@ -3,6 +3,7 @@ package dev.catmaid.data;
 import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 
@@ -58,9 +59,11 @@ public final class Database implements AutoCloseable {
                       npc_id      INTEGER,
                       home_world  TEXT, home_x REAL, home_y REAL, home_z REAL,
                       sitting     INTEGER NOT NULL DEFAULT 0,
+                      stored      INTEGER NOT NULL DEFAULT 0,
                       created_at  INTEGER NOT NULL
                     )
                     """);
+            migrateStoredColumn(st);
             st.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS maid_items (
                       maid_id TEXT NOT NULL,
@@ -81,6 +84,23 @@ public final class Database implements AutoCloseable {
                     """);
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_maids_owner ON maids(owner_uuid)");
         }
+    }
+
+    /**
+     * P9 新增的 {@code stored} 列：旧库（P1-P8 建的表）没有这一列，用 CREATE TABLE IF NOT EXISTS
+     * 建不出来，必须单独 ALTER。SQLite 没有 "ADD COLUMN IF NOT EXISTS"，所以先查 table_info。
+     *
+     * <p>幂等：列已存在就什么都不做——每次启动都跑一遍也安全。
+     */
+    private void migrateStoredColumn(Statement st) throws SQLException {
+        try (ResultSet rs = st.executeQuery("PRAGMA table_info(maids)")) {
+            while (rs.next()) {
+                if ("stored".equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        st.executeUpdate("ALTER TABLE maids ADD COLUMN stored INTEGER NOT NULL DEFAULT 0");
     }
 
     @Override

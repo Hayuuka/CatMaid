@@ -4,8 +4,6 @@ import dev.catmaid.data.MaidRepository;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
-import dev.catmaid.maid.MaidTrait;
-import dev.catmaid.maid.ModelApplier;
 import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
@@ -21,7 +19,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
@@ -44,7 +41,6 @@ public final class TalismanListener implements Listener {
     private final Plugin plugin;
     private final MaidManager maidManager;
     private final ModelRegistry models;
-    private final ModelApplier modelApplier;
     private final DialogueManager dialogue;
     private final MaidRepository repository;
     private final MaidItems items;
@@ -53,12 +49,10 @@ public final class TalismanListener implements Listener {
     private final Map<UUID, Long> summonAt = new HashMap<>();
 
     public TalismanListener(Plugin plugin, MaidManager maidManager, ModelRegistry models,
-                            ModelApplier modelApplier, DialogueManager dialogue, MaidRepository repository,
-                            MaidItems items) {
+                            DialogueManager dialogue, MaidRepository repository, MaidItems items) {
         this.plugin = plugin;
         this.maidManager = maidManager;
         this.models = models;
-        this.modelApplier = modelApplier;
         this.dialogue = dialogue;
         this.repository = repository;
         this.items = items;
@@ -81,6 +75,10 @@ public final class TalismanListener implements Listener {
             if (maidId != null) {
                 revive(event, maidId, item);
             }
+            return;
+        }
+        if (items.isStoredTalisman(item)) {
+            release(event, item);
             return;
         }
         if (items.isTalisman(item)) {
@@ -122,23 +120,16 @@ public final class TalismanListener implements Listener {
         }
 
         Location target = beside(player);
-        if (npc.isSpawned()) {
-            npc.teleport(target, PlayerTeleportEvent.TeleportCause.PLUGIN);
-        } else if (!npc.spawn(target)) {
+        maid.setAlive(true);
+        maid.setSitting(false);
+        // 生成/传送 + 重挂模型 + 绑 trait + 补装备血量都在 placeAt 里：
+        // 死亡时 Citizens 只是把 NPC 置为 despawned，模型 tracker 跟着旧实体没了（api-facts 17.11-3），
+        // 这段逻辑与魂符释放完全一样，没必要各写一遍
+        if (!maidManager.placeAt(maid, target)) {
+            maid.setAlive(false);
             Messages.send(player, "revive-failed", Map.of("name", maid.getName()));
             return;
         }
-        // 死亡时 Citizens 只是把 NPC 置为 despawned，但模型 tracker 跟着实体一起没了，
-        // 重新 spawn 后要再挂一次（api-facts 17.11-3）
-        modelApplier.apply(npc, maid.getModelId());
-
-        maid.setAlive(true);
-        maid.setNpcId(npc.getId());
-        maid.setSitting(false);
-        // 重新绑一次 trait：如果插件在女仆死亡期间重启过，Citizens 读回的 trait 实例里 maid 是 null
-        // （启动时不会为 dead 女仆做恢复），不绑会导致后续 onSpawn 里的装备写回失效
-        npc.getOrAddTrait(MaidTrait.class).bind(maid);
-        maidManager.onEntityReady(maid);
         // REVIVE 的数值是 0（死亡时已经扣过），所以这里不需要动好感度，
         // 只是把状态从"铃铛"翻回"活着"
 
@@ -149,6 +140,50 @@ public final class TalismanListener implements Listener {
         dialogue.send(maid, "on_revive");
         repository.save(maid);
         Messages.send(player, "revive-success", Map.of("name", maid.getName()));
+    }
+
+    // ---- 魂符：释放（收纳态） ----
+
+    /**
+     * 装有女仆的魂符 → 把她放出来（蓝图 P9-9.2）。
+     *
+     * <p>与召唤的分界只看 PDC 里有没有 maid_id：没有 = 空魂符（召唤新的），有 = 装着她（放出来）。
+     * 释放成功后魂符变回空的——同一张凭证能反复用，不会每次收纳都消耗一张。
+     */
+    private void release(PlayerInteractEvent event, ItemStack talisman) {
+        event.setCancelled(true);
+        Player player = event.getPlayer();
+        UUID maidId = items.maidIdOf(talisman);
+        if (maidId == null) {
+            Messages.send(player, "talisman-broken");
+            return;
+        }
+        Maid maid = maidManager.byId(maidId).orElse(null);
+        if (maid == null) {
+            Messages.send(player, "talisman-orphan");
+            return;
+        }
+        if (!player.getUniqueId().equals(maid.getOwnerUuid())) {
+            Messages.send(player, "talisman-not-yours");
+            return;
+        }
+        if (!maid.isStored()) {
+            Messages.send(player, "release-not-stored", Map.of("name", maid.getName()));
+            return;
+        }
+        Location target = beside(player);
+        if (!maidManager.release(maid, target)) {
+            Messages.send(player, "release-failed", Map.of("name", maid.getName()));
+            return;
+        }
+        // 凭证回流：扣掉这张"装着她"的魂符，还玩家一张空的
+        items.consumeOne(player, talisman);
+        player.getInventory().addItem(items.talisman()).values()
+                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+
+        playReviveEffect(target);
+        dialogue.send(maid, "on_release");
+        Messages.send(player, "release-success", Map.of("name", maid.getName()));
     }
 
     // ---- 魂符：召唤 ----

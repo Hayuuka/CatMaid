@@ -68,6 +68,15 @@ public final class MaidInteractListener implements Listener {
             return;
         }
         ItemStack hand = player.getInventory().getItemInMainHand();
+        if (items.isStoredTalisman(hand)) {
+            // 手里已经有一张"装着她"的魂符时不该再收一次（否则会凭空多出一张凭证）
+            Messages.send(player, "talisman-occupied", Map.of("name", maid.getName()));
+            return;
+        }
+        if (items.isTalisman(hand)) {
+            store(player, maid, hand);
+            return;
+        }
         if (isFeedable(hand)) {
             // 手上有吃的 → 喂她，不开菜单（蓝图 P4「喂食接线」）
             feed(player, maid, hand);
@@ -78,6 +87,46 @@ public final class MaidInteractListener implements Listener {
                 guiManager.openMain(player, maid);
             }
         });
+    }
+
+    /**
+     * 空魂符右键自己的女仆 = 把她收进魂符（蓝图 P9-9.2）。
+     *
+     * <p>票证语义：手上的空魂符变成"装着她的魂符"，所以是"消耗一张、给一张"而不是凭空生成——
+     * 玩家手里的魂符数量守恒，掉落/丢失的后果才说得清（P10-10.4 的凭证据此补发）。
+     */
+    private void store(Player player, Maid maid, ItemStack talisman) {
+        if (!maid.isAlive()) {
+            Messages.send(player, "store-dead", Map.of("name", maid.getName()));
+            return;
+        }
+        if (maid.isStored()) {
+            Messages.send(player, "store-already", Map.of("name", maid.getName()));
+            return;
+        }
+        if (!maidManager.store(maid)) {
+            Messages.send(player, "store-failed", Map.of("name", maid.getName()));
+            return;
+        }
+        playStoreEffect(player);
+        items.consumeOne(player, talisman);
+        ItemStack stored = items.storedTalisman(maid);
+        player.getInventory().addItem(stored).values()
+                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        dialogue.send(maid, "on_store");
+        Messages.send(player, "store-success", Map.of("name", maid.getName()));
+    }
+
+    /** 收纳特效：原地留一团烟，让她"钻进魂符"这件事有个交代（agent.md 第 10 节）。 */
+    private void playStoreEffect(Player player) {
+        Location loc = player.getLocation().add(0, 1, 0);
+        World world = loc.getWorld();
+        if (world == null) {
+            return;
+        }
+        world.spawnParticle(Particle.CLOUD, loc, 18, 0.25, 0.5, 0.25, 0.02);
+        world.spawnParticle(Particle.ENCHANT, loc, 20, 0.3, 0.5, 0.3, 0.4);
+        world.playSound(loc, Sound.BLOCK_BEACON_DEACTIVATE, 0.8f, 1.6f);
     }
 
     private boolean isFeedable(ItemStack item) {

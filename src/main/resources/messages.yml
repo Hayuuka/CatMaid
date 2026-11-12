@@ -33,6 +33,7 @@ list-header: "<light_purple>女仆列表（共 {count} 只）："
 list-entry: "<gray>- {name} <dark_gray>|</dark_gray> 主人 {owner} <dark_gray>|</dark_gray> {model} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
 state-alive: "<green>存活"
 state-bell: "<gray>铃铛"
+state-stored: "<light_purple>魂符中"
 
 help:
   - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> 当前可用命令："
@@ -84,6 +85,23 @@ setaffection-usage: "<red>用法：/catmaid admin setaffection <女仆UUID> <数
 affection-invalid: "<red>好感度要在 {min} 到 {max} 之间。"
 affection-set: "<green>已把 {name} 的好感度设为 {value}。"
 reload-done: "<green>配置与台词已重新加载（models 名单与名牌尺寸需要重启才生效）。"
+
+# ---- Phase 9 魂符收纳 ----
+talisman-occupied: "<gray>这张魂符里已经装着她了。"
+talisman-broken: "<gray>这张魂符里的气息散了。"
+talisman-orphan: "<gray>这张魂符已经失去了主人，毫无反应。"
+talisman-not-yours: "<gray>魂符毫无反应……"
+stored-talisman-name: "<light_purple>装有{name}的魂符"
+stored-talisman-lore:
+  - "<gray>拿在手里右键，就能把她放出来。"
+  - "<dark_gray>她一直在这里面等你。"
+store-success: "<light_purple>{name} 钻进了魂符里，乖乖等着你。"
+store-dead: "<red>{name} 现在只剩一枚铃铛了，先把她唤醒吧。"
+store-already: "<gray>{name} 已经在魂符里了。"
+store-failed: "<red>{name} 没办法收进魂符，请稍后再试。"
+release-success: "<light_purple>{name} 从魂符里出来了！"
+release-failed: "<red>放出 {name} 失败了，请稍后再试。"
+release-not-stored: "<gray>{name} 不在魂符里。"
 
 # ---- Phase 4 养成层 ----
 # 台词聊天行的外观：{name}=女仆名 {line}=台词内容（台词本身来自 dialogue.yml）
@@ -170,6 +188,8 @@ gui:
 
   model-entry: "<white>{model}"
   model-selected: "<green>✔ <white>{model}"
+
+  info-stored: "<gray>状态：<light_purple>魂符中<gray>（拿魂符右键可放出）"
 
   locked-slot: "<dark_gray>未解锁"
   locked-slot-lore:

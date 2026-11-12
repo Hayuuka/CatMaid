@@ -237,6 +237,10 @@ public final class GuiManager implements Listener {
 
         List<Component> lore = new ArrayList<>();
         Messages.getList("gui.info-lore-top", ph).forEach(line -> lore.add(noItalic(line)));
+        if (maid.isStored()) {
+            // 收纳态没有实体，界面上必须写清楚她在哪，否则玩家会以为女仆丢了（蓝图 9.2）
+            lore.add(noItalic(Messages.get("gui.info-stored")));
+        }
         lore.add(equipmentLine(maid));
         Messages.getList("gui.info-lore-bottom", ph).forEach(line -> lore.add(noItalic(line)));
         meta.lore(lore);

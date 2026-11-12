@@ -130,7 +130,7 @@ public final class CatMaidPlugin extends JavaPlugin {
                 new MaidDamageListener(this, maidManager, affectionManager, dialogueManager, repository,
                         maidItems), this);
         getServer().getPluginManager().registerEvents(
-                new TalismanListener(this, maidManager, modelRegistry, modelApplier,
+                new TalismanListener(this, maidManager, modelRegistry,
                         dialogueManager, repository, maidItems), this);
 
         // 战斗层：主人/女仆挨打 → 战斗模式的女仆锁定反击目标（P7）

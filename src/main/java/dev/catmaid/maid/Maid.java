@@ -31,6 +31,8 @@ public final class Maid {
     private String ownerTitle = "主人";
     private boolean alive = true;
     private boolean sitting;
+    /** 收纳态（P9）：她在这只魂符里，NPC 处于 despawn、没有实体，但仍占着主人名额。 */
+    private boolean stored;
     private Location home;
     private int npcId = -1;
     /** 血量上限，来自 {@code combat.maid-max-health}（启动/召唤时由 MaidManager 灌入）。 */
@@ -118,6 +120,14 @@ public final class Maid {
 
     public void setSitting(boolean sitting) {
         this.sitting = sitting;
+    }
+
+    public boolean isStored() {
+        return stored;
+    }
+
+    public void setStored(boolean stored) {
+        this.stored = stored;
     }
 
     public Location getHome() {

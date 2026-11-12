@@ -135,6 +135,21 @@ public final class BehaviorManager {
     }
 
     /**
+     * 打断当前动作（收纳进魂符时用）：停导航、清当前模式的 per-maid 状态、丢掉动画记忆。
+     *
+     * <p>与 {@link #forget} 的区别：不碰好感度/台词的计时器——她只是暂时收起来，
+     * 放出来以后该记得的还要记得（蓝图 9.2「位置/好感/背包/模式全保留」）。
+     */
+    public void reset(Maid maid) {
+        Movement.stop(maid);
+        BehaviorMode mode = modes.get(maid.getMode());
+        if (mode != null) {
+            mode.onDisable(maid);
+        }
+        animator.forget(maid.getId());
+    }
+
+    /**
      * 周期性的养成事项。跟随计时只在"跟随模式"累加（蓝图：跟随状态下每 5 分钟 +0.5），
      * 随机待机台词只在待机/跟随两种"没事干"的模式里掷骰子。
      */

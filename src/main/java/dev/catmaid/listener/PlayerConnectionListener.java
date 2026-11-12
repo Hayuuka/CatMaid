@@ -22,8 +22,8 @@ public final class PlayerConnectionListener implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         for (Maid maid : maidManager.byOwner(event.getPlayer().getUniqueId())) {
-            if (!maid.isAlive()) {
-                continue; // 铃铛态没有实体
+            if (!maid.isAlive() || maid.isStored()) {
+                continue; // 铃铛态没有实体；收纳态在魂符里，不该上线就冒出来
             }
             NPC npc = maid.npc();
             if (npc == null || npc.isSpawned()) {

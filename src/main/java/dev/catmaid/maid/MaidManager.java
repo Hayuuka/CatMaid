@@ -65,7 +65,7 @@ public final class MaidManager {
         for (Maid maid : repository.loadAll()) {
             maid.setMaxHealth(maxHealth());
             maids.put(maid.getId(), maid);
-            if (maid.isAlive()) {
+            if (maid.isAlive() && !maid.isStored()) {
                 awaitingNpc.add(maid.getId());
             }
         }
@@ -94,7 +94,7 @@ public final class MaidManager {
         boolean pending = false;
         // 先处理铃铛态：Citizens 会按存档里的"已生成"状态把她们的实体一起恢复出来，
         // 于是世界里多出一具没有名牌、还会被行为 tick 推动的幽灵身体（实测就是这么来的）。
-        despawnDeadNpcs();
+        despawnHiddenNpcs();
         for (UUID maidId : awaitingNpc) {
             Maid maid = maids.get(maidId);
             if (maid == null || !maid.isAlive()) {
@@ -116,13 +116,15 @@ public final class MaidManager {
     }
 
     /**
-     * 把铃铛态女仆残留的实体收掉。死亡时 Citizens 会自己 despawn 一次，但只要存档里带
-     * "spawned" 状态，重启后它又会把实体建回来。这里在每轮恢复里兜一遍，防止世界里留下
-     * 没有名牌的女仆身体（玩家视角就是"多了一个没名字的女仆"）。
+     * 把"不该有实体"的女仆残留实体收掉：铃铛态（alive=false）与收纳态（stored=true）。
+     *
+     * <p>死亡/收纳时 Citizens 会自己 despawn 一次，但只要存档里带 "spawned" 状态，重启后它又会
+     * 把实体建回来。这里在每轮恢复里兜一遍，防止世界里留下没有名牌的女仆身体
+     * （玩家视角就是"多了一个没名字的女仆"）。
      */
-    private void despawnDeadNpcs() {
+    private void despawnHiddenNpcs() {
         for (Maid maid : maids.values()) {
-            if (maid.isAlive() || maid.getNpcId() < 0) {
+            if ((maid.isAlive() && !maid.isStored()) || maid.getNpcId() < 0) {
                 continue;
             }
             NPC npc = CitizensAPI.getNPCRegistry().getById(maid.getNpcId());
@@ -130,7 +132,8 @@ public final class MaidManager {
                 continue;
             }
             npc.despawn();
-            logger.info("已收起铃铛态女仆 " + maid.getName() + " 的残留实体（NPC " + npc.getId() + "）");
+            logger.info("已收起" + (maid.isStored() ? "收纳态" : "铃铛态") + "女仆 "
+                    + maid.getName() + " 的残留实体（NPC " + npc.getId() + "）");
         }
     }
 
@@ -232,6 +235,71 @@ public final class MaidManager {
         // 台词在落库之后说：她开口时数据已经稳了，重启也不会变成"说了话但没这个人"
         dialogue.send(maid, "on_summon");
         return maid;
+    }
+
+    /**
+     * 收纳：把她收进魂符（蓝图 P9-9.2）。
+     *
+     * <p>只 despawn 实体、保留 NPC 注册与 npcId——释放时直接 spawn 回来即可，
+     * 与铃铛复活同一条路子（api-facts 18.3-1）。收纳态仍占主人名额（"她依旧是你的女仆"）。
+     *
+     * @return false 表示她不在可收纳状态（已收纳 / 只剩铃铛）
+     */
+    public boolean store(Maid maid) {
+        if (!maid.isAlive() || maid.isStored()) {
+            return false;
+        }
+        NPC npc = maid.npc();
+        if (npc != null && npc.isSpawned()) {
+            npc.despawn();
+        }
+        maid.setStored(true);
+        // 收进魂符等于离开这个世界：坐下状态与战斗目标都不该留到下次放出来
+        maid.setSitting(false);
+        behavior.reset(maid);
+        repository.save(maid);
+        return true;
+    }
+
+    /**
+     * 释放：把魂符里的她放回 {@code loc}。
+     *
+     * @return false 表示 NPC 已丢失或生成失败（此时她仍是收纳态，魂符不会被消耗）
+     */
+    public boolean release(Maid maid, Location loc) {
+        if (!maid.isStored()) {
+            return false;
+        }
+        maid.setStored(false);
+        if (!placeAt(maid, loc)) {
+            maid.setStored(true);
+            return false;
+        }
+        repository.save(maid);
+        return true;
+    }
+
+    /**
+     * 把一个"应该有实体"的女仆放到指定位置：绑 trait、按需生成、重挂模型、补装备与血量。
+     *
+     * <p>铃铛复活与魂符释放共用这一段——两处都曾各自抄一遍，漏掉 applyVitals 就是"她只有 20 血"
+     * （api-facts 20.9-A5）。调用方负责先把她标成 alive / stored=false。
+     */
+    public boolean placeAt(Maid maid, Location loc) {
+        NPC npc = maid.npc();
+        if (npc == null || loc == null || loc.getWorld() == null) {
+            return false;
+        }
+        npc.getOrAddTrait(MaidTrait.class).bind(maid);
+        if (npc.isSpawned()) {
+            npc.teleport(loc, org.bukkit.event.player.PlayerTeleportEvent.TeleportCause.PLUGIN);
+        } else if (!npc.spawn(loc)) {
+            return false;
+        }
+        // 重新生成后模型 tracker 跟着旧实体一起没了，必须再挂一次（api-facts 17.11-3）
+        modelApplier.apply(npc, maid.getModelId());
+        onEntityReady(maid);
+        return true;
     }
 
     public boolean remove(UUID maidId) {

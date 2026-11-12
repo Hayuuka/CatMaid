@@ -214,7 +214,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                     "name", maid.getName(),
                     "mode", modeName(maid.getMode()),
                     "affection", String.format(Locale.ROOT, "%.1f", maid.getAffection()),
-                    "state", Messages.plain(maid.isAlive() ? "state-alive" : "state-bell")));
+                    "state", Messages.plain(stateKey(maid))));
         }
     }
 
@@ -649,9 +649,21 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             ph.put("owner", displayName(Bukkit.getOfflinePlayer(maid.getOwnerUuid())));
             ph.put("model", maid.getModelId());
             ph.put("affection", String.format(Locale.ROOT, "%.1f", maid.getAffection()));
-            ph.put("state", Messages.plain(maid.isAlive() ? "state-alive" : "state-bell"));
+            ph.put("state", Messages.plain(stateKey(maid)));
             sender.sendMessage(Messages.get("list-entry", ph));
         }
+    }
+
+    /**
+     * 女仆状态的玩家可见名：铃铛（倒下）/ 魂符中（收纳）/ 存活。
+     *
+     * <p>三种状态互斥且有优先级：alive=false 才是铃铛态，收纳态一定还活着。
+     */
+    private String stateKey(Maid maid) {
+        if (!maid.isAlive()) {
+            return "state-bell";
+        }
+        return maid.isStored() ? "state-stored" : "state-alive";
     }
 
     /** 在线 → usercache → （仅离线模式）按名称建档；在线模式没有权威 UUID 时直接拒绝，避免造幽灵档案。 */

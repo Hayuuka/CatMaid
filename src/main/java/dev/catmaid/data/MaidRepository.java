@@ -121,6 +121,7 @@ public final class MaidRepository {
         maid.setHome(Locations.toBukkit(rs.getString("home_world"),
                 rs.getDouble("home_x"), rs.getDouble("home_y"), rs.getDouble("home_z")));
         maid.setSitting(rs.getInt("sitting") != 0);
+        maid.setStored(rs.getInt("stored") != 0);
         return maid;
     }
 
@@ -174,6 +175,7 @@ public final class MaidRepository {
                 home == null ? 0 : home.getY(),
                 home == null ? 0 : home.getZ(),
                 maid.isSitting(),
+                maid.isStored(),
                 maid.inventory().serialize(),
                 stats.kills(), stats.harvests(), stats.breeds(), stats.shears(), stats.milks());
     }
@@ -204,13 +206,13 @@ public final class MaidRepository {
     private void upsertMaid(Snapshot s) throws SQLException {
         // created_at 只在首次插入时写；冲突分支不更新它
         String sql = "INSERT INTO maids (id, owner_uuid, name, model_id, mode, affection, owner_title,"
-                + " alive, npc_id, home_world, home_x, home_y, home_z, sitting, created_at)"
-                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                + " alive, npc_id, home_world, home_x, home_y, home_z, sitting, stored, created_at)"
+                + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 + " ON CONFLICT(id) DO UPDATE SET owner_uuid=excluded.owner_uuid, name=excluded.name,"
                 + " model_id=excluded.model_id, mode=excluded.mode, affection=excluded.affection,"
                 + " owner_title=excluded.owner_title, alive=excluded.alive, npc_id=excluded.npc_id,"
                 + " home_world=excluded.home_world, home_x=excluded.home_x, home_y=excluded.home_y,"
-                + " home_z=excluded.home_z, sitting=excluded.sitting";
+                + " home_z=excluded.home_z, sitting=excluded.sitting, stored=excluded.stored";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int i = 1;
             ps.setString(i++, s.id().toString());
@@ -231,6 +233,7 @@ public final class MaidRepository {
             ps.setDouble(i++, s.homeY());
             ps.setDouble(i++, s.homeZ());
             ps.setInt(i++, s.sitting() ? 1 : 0);
+            ps.setInt(i++, s.stored() ? 1 : 0);
             ps.setLong(i, s.createdAt());
             ps.executeUpdate();
         }
@@ -274,17 +277,17 @@ public final class MaidRepository {
     private record Snapshot(UUID id, UUID ownerUuid, String name, String modelId, String mode,
                             double affection, String ownerTitle, boolean alive, int npcId,
                             String homeWorld, double homeX, double homeY, double homeZ,
-                            boolean sitting, Map<Integer, byte[]> items,
+                            boolean sitting, boolean stored, Map<Integer, byte[]> items,
                             int kills, int harvests, int breeds, int shears, int milks,
                             long createdAt) {
 
         Snapshot(UUID id, UUID ownerUuid, String name, String modelId, String mode,
                  double affection, String ownerTitle, boolean alive, int npcId,
                  String homeWorld, double homeX, double homeY, double homeZ,
-                 boolean sitting, Map<Integer, byte[]> items,
+                 boolean sitting, boolean stored, Map<Integer, byte[]> items,
                  int kills, int harvests, int breeds, int shears, int milks) {
             this(id, ownerUuid, name, modelId, mode, affection, ownerTitle, alive, npcId,
-                    homeWorld, homeX, homeY, homeZ, sitting, items,
+                    homeWorld, homeX, homeY, homeZ, sitting, stored, items,
                     kills, harvests, breeds, shears, milks, System.currentTimeMillis());
         }
     }

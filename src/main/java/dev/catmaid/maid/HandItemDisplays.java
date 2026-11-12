@@ -136,8 +136,8 @@ public final class HandItemDisplays {
         ticker++;
         Set<UUID> live = new HashSet<>();
         for (Maid maid : maids) {
-            if (!maid.isAlive()) {
-                continue; // 铃铛态没有实体，清理由下面的孤儿回收兜住
+            if (!maid.isAlive() || maid.isStored()) {
+                continue; // 铃铛态/收纳态没有实体，清理由下面的孤儿回收兜住
             }
             live.add(maid.getId());
             if (Math.floorMod(maid.getNpcId(), STAGGER) != Math.floorMod(ticker, STAGGER)) {
