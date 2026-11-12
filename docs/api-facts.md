@@ -1386,3 +1386,102 @@ P4 收口状态：新增 9 个类 / 改 10 个文件；蓝图验收 7 项全部�
    - 每 tick 扫描只在错峰条件满足时做（`tick % 20 == npcId % 20`），且先判区块已加载，否则 TPS 会掉。
 6. **验收前准备**：一片成熟小麦（`/setblock ... wheat[age=7]`）、给女仆一把锄头（GUI 装备页）、
    清空她的背包；收成后看 GUI 背包与 `catmaid.db` 的 items 表，重启确认不丢。
+
+---
+
+## 19. Phase 5 交接（农业模式，2026-11-12）
+
+### 19.1 阶段结论
+
+**代码落地，服务端链路全部实测通过**：成熟小麦逐株收割（一次连续 42 株）、补种扣种子、收成入女仆背包、
+重启后背包不丢、背包满时掉落原地、栅栏围住的作物 8 秒放弃换下一株、坐下时完全不动作。
+**需真人客户端确认的只剩观感**：田里走动的姿态、`on_work_done` 台词、以及上下台阶会不会踩坏耕地。
+
+### 19.2 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `behavior/mode/FarmMode` | 目标扫描（17×3×17，区块未加载即跳过）→ 导航 → 收割 → 补种；卡死 8 秒拉黑 30 秒 |
+| `behavior/BehaviorManager` | 注册 `Maid.Mode.FARM`；降级注释从 P5-P7 改为 P6-P7 |
+| `maid/MaidInventory` | 新增 `consumeOne(Material)`：只搜存储位（装备位是主人特意放的，农活不该动） |
+| `resources/config.yml` | 新增 `farm` 段（`radius` / `center` / `replant` / `crops`） |
+
+### 19.3 实测新增的 API 行为事实
+
+**(1) `Block#breakNaturally(ItemStack)` 返回 `boolean`。** [JAR] paper-api 26.2.build.135：
+`boolean breakNaturally()`、`boolean breakNaturally(ItemStack)`，另有 `breakNaturally(boolean…)` 若干重载，
+**没有任何返回掉落列表的重载**。要"先算掉落再入包"只能用 `Collection<ItemStack> getDrops(ItemStack)`。
+副作用：`breakNaturally` 会把物品直接掉进世界，用它就必然要把物品再捡一次。
+
+**(2) RCON 下查方块状态只有一条路**：`execute if block <x> <y> <z> <block[state]> run say <标记>`，
+然后去服务端日志 grep 标记。两个坑：
+- `say` 的内容**不会**出现在 RCON 响应里（它是广播，不是命令反馈），RCON 响应是空的，必须看日志；
+- `data get block` 只对容器这类方块实体有效，普通方块一律报 `The target block is not a block entity`。
+
+**(3) "背包满"场景不需要改代码也能造出来**：DB 里把 `maid_items` 的 slot 6 那条 blob 复制到 slot 6..32
+（27 个同材质 60 个的堆）→ 女仆好感 9.5 属第 0 档、容量正好 27 → 再收 4 株把 27 堆都叠到 64，之后
+`addItem` 必然失败。实测表现与预期一致：小麦继续叠进旧堆，**种子无处可去直接掉在地上**
+（`@e[type=item]` 能看到 `wheat_seeds x3~8` 若干）。
+
+**(4) 玩家型 NPC 在平地麦田里走不会踩坏耕地。** 41 株收割 + 多次导航后复查，耕地仍是 farmland、
+未收的 `wheat[age=7]` 仍在原地（原版踩踏需要"落到耕地上"的落体动作，平走不触发）。
+上下台阶/跳跃场景未测，留给客户端观察。
+
+### 19.4 与蓝图的有意差异
+
+1. **空目标的待机台词**复用 `DialogueManager.tickIdle` 的闸门（180 秒掷 5% + 每女仆 300 秒冷却），
+   而不是蓝图写的"无目标 → 概率 on_idle_random"——按 20 tick 决策间隔各掷 5% 等于每秒 5%，会刷屏。
+2. **拉黑表**放 `FarmMode.State` 里（每女仆一份），`onDisable` 整份清掉；蓝图只写了 `Map<BlockPos, Long>`，
+   没说归属。用 `BlockVector` 作键（`BlockPos` 不是 Bukkit 类型）。
+3. **收割不用 `breakNaturally`**（见 19.6），所以没有默认的方块破裂表现，手动补了
+   `Sound.BLOCK_CROP_BREAK` + `Particle.BLOCK`（agent.md 第 10 节：心跳不能省）。
+4. **卡死判定放在"是否在导航"之外**：寻路失败时 navigator 会静默停下（`isNavigating` 变 false），
+   只判"导航中"会变成原地反复下目标、永不拉黑。现在按"位置 8 秒没变"判定，两种失败都能兜住。
+
+### 19.5 验收结果（服务端实测 2026-11-12 12:55–13:06）
+
+| 蓝图验收项 | 结果 | 依据 |
+|---|---|---|
+| 一片成熟小麦 → 逐株收割、补种、种子从背包扣除 | **✅ 通过（服务端）** | 42 株连续收割；`execute if block 17 72 -1 wheat[age=0]` 命中（补种回 age 0）；背包 `WHEAT_SEEDS` 63→43 逐株递减 |
+| 收成进女仆 GUI 背包，重启不丢 | **✅ 通过（服务端）** | 第一次运行收 42 株后停机重启，再次收割时背包首行已是 `WHEATx54`（延续上一轮），`maid_items` 有 3 条记录 |
+| 背包已满 → 物品掉落原地 | **✅ 通过（服务端）** | 27 格塞满 60 个小麦后继续收割：小麦叠满 64，种子全部落地（`@e[type=item]` 见多堆 wheat_seeds） |
+| 栅栏围住的作物 → 8 秒放弃转下一个，不卡死 | **✅ 通过（服务端）** | 四向栅栏围住的 `(14,72,7)`：`13:00:28` 开始前往 → `13:00:36` 放弃（正好 8 秒）→ 之后 `没找到成熟作物`，塔上无异常 |
+| 空闲时坐着（sitting）不工作 | **✅ 通过（服务端）** | `sitting=1` 重启后放进 10 株成熟小麦，30 秒内收割/导航探针各 0 条（BehaviorManager 的坐姿硬拦截生效） |
+| 观感（走动姿态、on_work_done 台词） | **待客户端** | 需要真人进服看，方法见 19.7 |
+
+编译与启动：`gradlew shadowJar` 通过；paper-26.2-62 启动无 ERROR（唯一 WARN 仍是既有的
+`resource-pack-id missing`）。探针在验收后已全部删除并重新打包，最终包复跑一轮确认仍能收割
+（`maid_stats.harvests` 70 → 82，好感 15.5 → 17.7，与 12 株 ×0.1 吻合）。
+
+### 19.6 冲突处理记录（agent.md 第 9 节格式）
+
+```
+[CONFLICT] 蓝图位置: Phase 5「harvest: drops = block.breakNaturally(tool) // 返回 List<ItemStack>」
+现实情况: Paper 26.2 的签名是 boolean breakNaturally(ItemStack)（[JAR] 已核），没有返回掉落列表的
+          重载；掉落列表只有 getDrops(ItemStack) → Collection<ItemStack>。而且 breakNaturally 会把物品
+          直接掉进世界，"收成入背包"就得先把地上的捡回来。
+采用方案: getDrops(tool) 先算掉落 → setType(AIR, false) 静默清空 → 逐件 addItem，放不下的
+          dropItemNaturally 掉在原地
+理由: 蓝图要求的"收成入背包、满了才落地"只有这条路径能实现；工具不扣耐久也符合原版（作物没有正确工具）
+```
+
+**18.11 第 2 条"工具直接传给 `Block#breakNaturally(ItemStack)`（自带耐久与掉落）"随之作废**，
+以后写 P6 的剪毛/挤奶别再照抄那句。
+
+### 19.7 已知限制 / P6 接手要点
+
+1. **好感满 100 时收成不落库**：`AffectionManager.apply` 在 `target == oldValue` 时提前 return，
+   于是 100 好感的女仆收成要等 5 分钟 `saveAll` 或停机保存。运维上无碍，若要"每株必落库"
+   需要额外保存点（本轮没加，避免超前设计）。
+2. **FARM 不进 `BehaviorManager.pulse` 的待机台词通道**：干活时碎碎念很吵；只有"附近没活干"才会
+   走 `tickIdle` 的闸门。
+3. **观感待客户端**：① 田里走动时是否有 walk 动画（P3 已能播，但农场是"走走停停"的节奏，
+   要看停下的瞬间会不会闪回 STAND）；② `on_work_done` 台词是否真的偶尔出现（10% 概率、收 10 株一次）；
+   ③ 上下台阶/跳下耕地会不会踩坏 farmland（平地已确认不会）。
+4. **P6 可复用的**：`Movement.arrived`（现在有调用点了）、`State` 的"目标 + 卡死 + 拉黑"三件套、
+   `consumeOne`、`getDrops` 替代 `breakNaturally` 的做法。捡拾地面物品时记得 `pickupDelay` 与
+   `age > 10 tick`（蓝图 P6 要求），别抢玩家刚丢的东西。
+5. **无玩家在线时 Citizens 仍会在约 1 分钟后 despawn**（18.3-4），自动化验收一律"先 `/npc spawn` 立刻测"。
+
+P5 收口状态：新增 1 个类 / 改 3 个文件；蓝图验收 5 项服务端全通过、1 项观感待客户端。
+提交记录：`8de4fe7` → `2d71296` → `ad5c995` → 本次文档提交。
