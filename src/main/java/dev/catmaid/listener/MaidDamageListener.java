@@ -17,6 +17,7 @@ import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
@@ -108,16 +109,43 @@ public final class MaidDamageListener implements Listener {
 
     private void onHurt(Maid maid) {
         long now = System.currentTimeMillis();
-        Long lastAffection = hurtAffectionAt.get(maid.getId());
-        if (lastAffection == null || now - lastAffection >= hurtAffectionCooldownMs()) {
-            hurtAffectionAt.put(maid.getId(), now);
-            affection.apply(maid, -affection.loss(AffectionReason.HURT), AffectionReason.HURT);
+        // 战斗模式下挨打是履行职责，不扣好感（蓝图窗口 P7 裁决）：否则带她打怪时每次挨打 -0.5、
+        // 击杀才 +0.2，战斗模式等于惩罚模式。非战斗模式照旧扣——主人让她白白挨打，心疼是设计意图。
+        if (maid.getMode() != Maid.Mode.COMBAT) {
+            Long lastAffection = hurtAffectionAt.get(maid.getId());
+            if (lastAffection == null || now - lastAffection >= hurtAffectionCooldownMs()) {
+                hurtAffectionAt.put(maid.getId(), now);
+                affection.apply(maid, -affection.loss(AffectionReason.HURT), AffectionReason.HURT);
+            }
         }
         Long lastDialogue = hurtDialogueAt.get(maid.getId());
         if (lastDialogue == null || now - lastDialogue >= hurtDialogueCooldownMs()) {
             hurtDialogueAt.put(maid.getId(), now);
             dialogue.send(maid, "on_hurt");
         }
+    }
+
+    /**
+     * 女仆打出去的伤害：按好感度等级加成（蓝图 P7「好感 60+ 打得痛 +15%」）。
+     *
+     * <p>放在这个类是因为这里已经有可靠的"实体 → 女仆"反查（含 despawn 兜底）。
+     * 箭也要算：damager 是 Arrow 时顺着 shooter 找回她——不然拿弓的女仆永远吃不到加成。
+     */
+    @EventHandler(ignoreCancelled = true)
+    public void onMaidDealDamage(EntityDamageByEntityEvent event) {
+        Entity attacker = event.getDamager();
+        if (attacker instanceof Projectile projectile && projectile.getShooter() instanceof Entity shooter) {
+            attacker = shooter;
+        }
+        Maid maid = maidOf(attacker);
+        if (maid == null) {
+            return;
+        }
+        double bonus = affection.damageBonus(affection.level(maid.getAffection()));
+        if (bonus <= 0) {
+            return;
+        }
+        event.setDamage(event.getDamage() * (1 + bonus));
     }
 
     /** 好感扣减冷却：蓝图没提多段伤害，火焰/岩浆每 10 tick 一跳，不节流会把好感放干（见类注释）。 */
