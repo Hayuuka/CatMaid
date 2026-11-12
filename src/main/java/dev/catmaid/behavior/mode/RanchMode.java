@@ -1,0 +1,326 @@
+package dev.catmaid.behavior.mode;
+
+import dev.catmaid.behavior.BehaviorMode;
+import dev.catmaid.behavior.Movement;
+import dev.catmaid.dialogue.DialogueManager;
+import dev.catmaid.maid.Maid;
+import org.bukkit.Location;
+import org.bukkit.Sound;
+import org.bukkit.World;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Item;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.BlockVector;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * 畜牧：捡拾地面产物、繁殖、剪毛、挤奶（蓝图 P6）。
+ *
+ * <p>节奏被拆成两档，这是蓝图没写但必须这么做的地方（api-facts 19.9-5.1）：
+ * <ul>
+ *   <li><b>捡拾每 10 tick</b>：只收脚边的（{@link #PICKUP_REACH}），不导航、不决策。鸡蛋在地上躺 1.5 秒
+ *       才被看见，观感上就是"她没看见"；</li>
+ *   <li><b>决策每 30 tick</b>：挑目标（走得远的东西、动物）、走过去、执行动作。</li>
+ * </ul>
+ * 两档都按 {@code tick % N == npcId % N} 错峰，10 只女仆不会挤在同一 tick 扫世界（agent.md 7.1）。
+ *
+ * <p>所有动作共享一个 per-maid 状态机（{@link State}）：目标 + 8 秒卡死判定 + 30 秒拉黑。
+ * 目标失效（被主人牵走、羊已经被剪、鸡蛋被玩家捡了）时重新决策，不保留半截状态。
+ *
+ * <p>动画不在这里碰：姿态由 BehaviorManager 按 {@code Movement.isNavigating} 推导。
+ */
+public final class RanchMode implements BehaviorMode {
+
+    /** 捡拾：每 10 tick 一次（蓝图 P6 踩坑 1 的口径）。 */
+    private static final int PICKUP_INTERVAL = 10;
+    /** 决策：每 30 tick 一次（蓝图 P6）。 */
+    private static final int DECIDE_INTERVAL = 30;
+    /** 走到目标 2.5 格内算够得着。蓝图写 2.0，牛/羊有碰撞箱，卡太紧会永远"差一点"。 */
+    private static final double REACH = 2.5;
+    /** 脚边这个距离直接收进包，不必再导航一趟。 */
+    private static final double PICKUP_REACH = 2.5;
+    /** 略快于步行，与农业模式一致。 */
+    private static final float WALK_SPEED = 1.1f;
+    /** 8 秒没挪动 0.5 格 → 认定走不过去（栅栏/水沟），拉黑（agent.md 7.2）。 */
+    private static final long STUCK_MS = 8000L;
+    private static final double STUCK_DISTANCE_SQ = 0.25;
+    /** 拉黑 30 秒：给主人 30 秒挪开障碍，之后允许再试。 */
+    private static final long BLACKLIST_MS = 30_000L;
+    /** 完成一次动作后歇 2 秒（蓝图 P6），否则她会一秒内连剪三只羊。 */
+    private static final long ACTION_COOLDOWN_MS = 2000L;
+    /** 刚掉出来的东西先放着：物品出生 10 tick 内不碰（蓝图 P6）。 */
+    private static final int ITEM_MIN_AGE_TICKS = 10;
+    /**
+     * 玩家亲手丢出的物品带 owner。刚丢的别抢（蓝图意图），但掉了很久的还是要收——
+     * 玩家"扔给她"的东西躺在地上没人捡才更怪。
+     */
+    private static final int OWNER_GRACE_TICKS = 100;
+
+    private final FileConfiguration config;
+    private final DialogueManager dialogue;
+    private final Map<UUID, State> states = new HashMap<>();
+
+    public RanchMode(FileConfiguration config, DialogueManager dialogue) {
+        this.config = config;
+        this.dialogue = dialogue;
+    }
+
+    /** 当前这一步要做什么。同一时刻只有一件事，避免导航目标互相打架。 */
+    private enum Action {
+        PICKUP
+    }
+
+    /** 每只女仆的畜牧状态。Mode 是单例，状态必须按女仆分，否则十只会抢同一个目标。 */
+    private static final class State {
+        private Action action;
+        private Entity target;
+        private Location lastPos;
+        private long lastProgressAt;
+        /** 下一次允许动作的时间戳（毫秒）。 */
+        private long nextActionAt;
+        /** 走不过去的位置 → 解禁时间戳。物品原地不动、动物被栅栏困住时都靠它止损。 */
+        private final Map<BlockVector, Long> blacklist = new HashMap<>();
+    }
+
+    @Override
+    public Maid.Mode type() {
+        return Maid.Mode.RANCH;
+    }
+
+    @Override
+    public void onDisable(Maid maid) {
+        // 状态里握着实体引用与拉黑表，女仆切走/被移除后留着只会涨内存
+        states.remove(maid.getId());
+    }
+
+    @Override
+    public void tick(Maid maid, int tick) {
+        LivingEntity entity = maid.entity();
+        if (entity == null) {
+            return;
+        }
+        State state = states.computeIfAbsent(maid.getId(), key -> new State());
+
+        if (staggered(tick, maid, PICKUP_INTERVAL)) {
+            vacuum(maid, entity, state);
+        }
+        if (!staggered(tick, maid, DECIDE_INTERVAL)) {
+            return;
+        }
+        if (System.currentTimeMillis() < state.nextActionAt) {
+            return;
+        }
+        decide(maid, entity, state, tick);
+    }
+
+    /** 错峰：第 tick 该不该这只女仆干活。 */
+    private static boolean staggered(int tick, Maid maid, int interval) {
+        return Math.floorMod(tick, interval) == Math.floorMod(maid.getNpcId(), interval);
+    }
+
+    // ---- 捡拾 ----
+
+    /**
+     * 收脚边的东西。只收 {@link #PICKUP_REACH} 内的：这一步每 10 tick 跑一次，如果在这里开导航，
+     * 会把"走去喂牛"的目标顶掉，表现成她一步三回头。
+     */
+    private void vacuum(Maid maid, LivingEntity entity, State state) {
+        if (!config.getBoolean("ranch.pickup", true)) {
+            return;
+        }
+        Item item = nearestItem(maid, entity, PICKUP_REACH, state);
+        if (item != null) {
+            collect(maid, item, state);
+        }
+    }
+
+    /**
+     * 收一件进包。一次只收一件（api-facts 19.9-5.5）：满包时如果一次吞一堆再吐回地上，
+     * 物品会在地上反复重生，看起来像在抽搐。
+     *
+     * @return 是否收干净了（没进包或只进了一部分都返回 false）
+     */
+    private boolean collect(Maid maid, Item item, State state) {
+        ItemStack stack = item.getItemStack();
+        int leftover = maid.inventory().addItem(stack);
+        if (leftover == stack.getAmount()) {
+            // 一件都没进去：包满。拉黑这件，别每 30 tick 又跑回来试一次
+            blacklist(state, item.getLocation());
+            return false;
+        }
+        if (leftover > 0) {
+            // 部分进包：余量留在原地等她腾出空位
+            stack.setAmount(leftover);
+        } else {
+            item.remove();
+        }
+        LivingEntity self = maid.entity();
+        item.getWorld().playSound(self == null ? item.getLocation() : self.getLocation(),
+                Sound.ENTITY_ITEM_PICKUP, 0.5f, 1.4f);
+        return leftover == 0;
+    }
+
+    /** 可捡判定：蓝图 P6 的"pickupDelay<=0 且 age>10 tick"，外加 owner 宽限与"怪物能不能捡"。 */
+    private static boolean collectible(Item item) {
+        if (item.getPickupDelay() > 0 || item.getTicksLived() <= ITEM_MIN_AGE_TICKS) {
+            return false;
+        }
+        if (!item.canMobPickup()) {
+            return false;
+        }
+        UUID owner = item.getOwner();
+        return owner == null || item.getTicksLived() >= OWNER_GRACE_TICKS;
+    }
+
+    /** 半径内最近的、能捡的、没被拉黑的一件东西。 */
+    private Item nearestItem(Maid maid, LivingEntity entity, double radius, State state) {
+        World world = entity.getWorld();
+        Location from = entity.getLocation();
+        Item best = null;
+        double bestSq = radius * radius;
+        for (Entity candidate : world.getNearbyEntities(from, radius, radius, radius)) {
+            if (!(candidate instanceof Item item) || !collectible(item)
+                    || blacklisted(state, item.getLocation())) {
+                continue;
+            }
+            double distance = item.getLocation().distanceSquared(from);
+            if (distance <= bestSq) {
+                bestSq = distance;
+                best = item;
+            }
+        }
+        return best;
+    }
+
+    // ---- 决策 ----
+
+    private void decide(Maid maid, LivingEntity entity, State state, int tick) {
+        if (state.action != null && !stillValid(maid, entity, state)) {
+            // 目标没了（被捡走/牵走/剪过）→ 丢掉半截状态重挑，不要对着空地走
+            reset(state);
+        }
+        if (state.action == null) {
+            select(maid, entity, state);
+        }
+        if (state.action == null) {
+            // 没活干：站住，台词交给随机待机那套节流（自带间隔/概率/每女仆冷却）
+            Movement.stop(maid);
+            dialogue.tickIdle(maid, tick);
+            return;
+        }
+        pursue(maid, entity, state);
+    }
+
+    /** 挑一件要做的事。捡拾优先（蓝图 P6 顺序）：地上有东西就先收，别让鸡蛋一直躺着。 */
+    private void select(Maid maid, LivingEntity entity, State state) {
+        // 扫描前顺手清过期拉黑（与扫描同频，不必另找时机）
+        pruneBlacklist(state);
+        Item item = nearestItem(maid, entity, radius(), state);
+        if (item == null) {
+            return;
+        }
+        state.action = Action.PICKUP;
+        state.target = item;
+        state.lastPos = null;
+    }
+
+    /** 当前目标还成立吗。目标被主人牵走、被玩家捡走、羊已经被剪过，都要重新挑。 */
+    private boolean stillValid(Maid maid, LivingEntity entity, State state) {
+        Entity target = state.target;
+        if (target == null || !target.isValid() || target.isDead()) {
+            return false;
+        }
+        if (!target.getWorld().equals(entity.getWorld())) {
+            return false;
+        }
+        if (target instanceof Item item) {
+            return collectible(item) && !blacklisted(state, item.getLocation());
+        }
+        return true;
+    }
+
+    /** 朝目标走；到了就干活。 */
+    private void pursue(Maid maid, LivingEntity entity, State state) {
+        Location target = state.target.getLocation();
+        if (Movement.arrived(entity, target, REACH)) {
+            execute(maid, state);
+            return;
+        }
+        if (!progressed(entity, state)) {
+            giveUp(maid, state);
+            return;
+        }
+        if (!Movement.isNavigating(maid)) {
+            // 每轮决策最多下一次目标：重复下发会打断 Citizens 的寻路（P3 踩过朝向乱甩）
+            Movement.navigate(maid, target, WALK_SPEED);
+        }
+    }
+
+    private void execute(Maid maid, State state) {
+        if (state.action == Action.PICKUP) {
+            collect(maid, (Item) state.target, state);
+        }
+        reset(state);
+        state.nextActionAt = System.currentTimeMillis() + ACTION_COOLDOWN_MS;
+    }
+
+    // ---- 卡死与拉黑 ----
+
+    /**
+     * 这一轮有没有进展。挪过 0.5 格就刷新时间戳。
+     *
+     * <p>不影响"是否在导航"的判断：寻路失败时 navigator 会静默停下（isNavigating 变 false），
+     * 只判导航中的话会变成原地反复下目标、永不放弃（P5 踩过）。
+     */
+    private static boolean progressed(LivingEntity entity, State state) {
+        Location pos = entity.getLocation();
+        if (state.lastPos == null || state.lastPos.distanceSquared(pos) > STUCK_DISTANCE_SQ) {
+            state.lastPos = pos.clone();
+            state.lastProgressAt = System.currentTimeMillis();
+            return true;
+        }
+        return System.currentTimeMillis() - state.lastProgressAt < STUCK_MS;
+    }
+
+    /** 放弃当前目标：停下、把这个位置拉黑 30 秒、等下一轮换目标。 */
+    private void giveUp(Maid maid, State state) {
+        Movement.stop(maid);
+        if (state.target != null) {
+            blacklist(state, state.target.getLocation());
+        }
+        reset(state);
+    }
+
+    private static void blacklist(State state, Location location) {
+        state.blacklist.put(new BlockVector(location.getBlockX(), location.getBlockY(), location.getBlockZ()),
+                System.currentTimeMillis() + BLACKLIST_MS);
+    }
+
+    private static boolean blacklisted(State state, Location location) {
+        Long until = state.blacklist.get(
+                new BlockVector(location.getBlockX(), location.getBlockY(), location.getBlockZ()));
+        return until != null && until > System.currentTimeMillis();
+    }
+
+    /** 清掉过期条目，防止长期运行后拉黑表越攒越大。 */
+    private static void pruneBlacklist(State state) {
+        long now = System.currentTimeMillis();
+        state.blacklist.entrySet().removeIf(entry -> entry.getValue() <= now);
+    }
+
+    /** 收尾：清空目标，但保留 nextActionAt 与拉黑表。 */
+    private static void reset(State state) {
+        state.action = null;
+        state.target = null;
+        state.lastPos = null;
+    }
+
+    private int radius() {
+        return Math.max(1, config.getInt("ranch.radius", 8));
+    }
+}

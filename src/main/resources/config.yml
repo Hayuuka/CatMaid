@@ -52,6 +52,13 @@ farm:
     - NETHER_WART
     - COCOA
 
+# ---- Phase 6 畜牧模式 ----
+# 女仆在自身周围（ranch.radius）捡地面产物、给动物配对、剪羊毛、挤奶。
+# 捡拾每 10 tick 一次、决策每 30 tick 一次，均按 npcId 错峰。
+ranch:
+  radius: 8          # 找动物/找掉落物的半径（以女仆脚下为中心）
+  pickup: true       # 是否顺手捡地面产物（鸡蛋、羊毛、掉落物）。关掉就只管动物
+
 # ---- Phase 4 养成层 ----
 
 # 交互
