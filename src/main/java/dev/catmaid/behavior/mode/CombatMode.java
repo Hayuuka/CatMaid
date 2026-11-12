@@ -3,6 +3,7 @@ package dev.catmaid.behavior.mode;
 import dev.catmaid.behavior.BehaviorMode;
 import dev.catmaid.behavior.Movement;
 import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.maid.Maid;
 import net.citizensnpcs.api.CitizensAPI;
@@ -18,6 +19,7 @@ import org.bukkit.util.BlockVector;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 战斗：主动索敌、近战迎击、护主反击（蓝图 P7）。
@@ -53,7 +55,10 @@ public final class CombatMode implements BehaviorMode {
      * 不判强度的话 20 tick 一刀在斧头上只有 ~80% 伤害，会把"好感加成 15%"整个淹掉
      * （api-facts 20.9-A4）。
      */
+    /** 攻强不足 0.9 就等下一刀。 */
     private static final float MIN_ATTACK_STRENGTH = 0.9f;
+    /** 打完一只偶尔说一句（与农业/畜牧同口径：十次一句，不至于碎碎念）。 */
+    private static final double WORK_LINE_CHANCE = 0.1;
 
     private final FileConfiguration config;
     private final AffectionManager affection;
@@ -103,7 +108,7 @@ public final class CombatMode implements BehaviorMode {
         }
         State state = states.computeIfAbsent(maid.getId(), key -> new State());
         pruneBlacklist(state);
-        maintainTarget(entity, state);
+        maintainTarget(maid, entity, state);
 
         if (state.target == null) {
             // 脱战：站住，把主人交还给跟随逻辑（她会自己处理主人不在线、跨世界、太远传送）
@@ -150,10 +155,14 @@ public final class CombatMode implements BehaviorMode {
     // ---- 目标 ----
 
     /** 目标死了算战绩；死了/跑远/换世界/被拉黑就丢目标，没目标就重新找。 */
-    private void maintainTarget(LivingEntity entity, State state) {
+    private void maintainTarget(Maid maid, LivingEntity entity, State state) {
         LivingEntity target = state.target;
-        if (target != null && (target.isDead() || !target.isValid())) {
-            // 战绩与好感在下一版接（蓝图 P7 的 kills/WORK_KILL）
+        if (target != null && target.isDead()) {
+            creditKill(maid);
+            state.target = null;
+            state.lastPos = null;
+        } else if (target != null && !target.isValid()) {
+            // 实体被卸载/移除（区块卸载、怪被插件清掉）不算击杀，只是目标没了
             state.target = null;
             state.lastPos = null;
         }
@@ -164,6 +173,20 @@ public final class CombatMode implements BehaviorMode {
         if (state.target == null) {
             state.target = nearestHostile(entity, state);
             state.lastPos = null;
+        }
+    }
+
+    /**
+     * 记一次击杀：统计 + 好感 + 偶尔一句台词（蓝图 P7；agent.md 第 10 节：心跳不能省）。
+     *
+     * <p>只在"她正在打的这个目标死了"时记，所以站在旁边看主人杀怪不会蹭到战绩。
+     * 代价是主人抢了最后一刀也算她的——比起漏记，这个偏差更容易接受。
+     */
+    private void creditKill(Maid maid) {
+        maid.stats().addKill();
+        affection.apply(maid, affection.gain(AffectionReason.WORK_KILL), AffectionReason.WORK_KILL);
+        if (ThreadLocalRandom.current().nextDouble() < WORK_LINE_CHANCE) {
+            dialogue.send(maid, "on_work_done");
         }
     }
 
