@@ -47,18 +47,21 @@ public final class TalismanListener implements Listener {
     private final ModelApplier modelApplier;
     private final DialogueManager dialogue;
     private final MaidRepository repository;
+    private final MaidItems items;
 
     /** 召唤冷却，防止连点魂符瞬间刷出几个 NPC（上限校验也在，但别让玩家看到"失败"提示堆屏）。 */
     private final Map<UUID, Long> summonAt = new HashMap<>();
 
     public TalismanListener(Plugin plugin, MaidManager maidManager, ModelRegistry models,
-                            ModelApplier modelApplier, DialogueManager dialogue, MaidRepository repository) {
+                            ModelApplier modelApplier, DialogueManager dialogue, MaidRepository repository,
+                            MaidItems items) {
         this.plugin = plugin;
         this.maidManager = maidManager;
         this.models = models;
         this.modelApplier = modelApplier;
         this.dialogue = dialogue;
         this.repository = repository;
+        this.items = items;
     }
 
     @EventHandler
@@ -73,12 +76,14 @@ public final class TalismanListener implements Listener {
         if (item == null) {
             return;
         }
-        UUID maidId = MaidItems.bellMaidId(plugin, item);
-        if (maidId != null) {
-            revive(event, maidId, item);
+        if (items.isBell(item)) {
+            UUID maidId = items.maidIdOf(item);
+            if (maidId != null) {
+                revive(event, maidId, item);
+            }
             return;
         }
-        if (MaidItems.isTalisman(plugin, item, talismanMaterial())) {
+        if (items.isTalisman(item)) {
             summon(event, item);
         }
     }
@@ -138,7 +143,7 @@ public final class TalismanListener implements Listener {
         // 只是把状态从"铃铛"翻回"活着"
 
         player.getInventory().removeItem(new ItemStack(cost.material(), cost.amount()));
-        MaidItems.consumeOneInMainHand(player, bell);
+        items.consumeOne(player, bell);
 
         playReviveEffect(target);
         dialogue.send(maid, "on_revive");
@@ -163,14 +168,8 @@ public final class TalismanListener implements Listener {
             return;
         }
         event.setCancelled(true);
-        MaidItems.consumeOneInMainHand(player, talisman);
+        items.consumeOne(player, talisman);
         Messages.send(player, "talisman-used", Map.of("name", maid.getName()));
-    }
-
-    private Material talismanMaterial() {
-        Material material = Material.matchMaterial(
-                plugin.getConfig().getString("interaction.talisman-material", "AMETHYST_SHARD"));
-        return material == null ? Material.AMETHYST_SHARD : material;
     }
 
     /** config 的 {@code death.revive-cost} 形如 {@code DIAMOND:1}；写错材质就回落到默认值而不是让复活彻底不可用。 */

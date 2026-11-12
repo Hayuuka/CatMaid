@@ -14,7 +14,6 @@ import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.npc.NPC;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -68,13 +67,14 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     private final AffectionManager affection;
     private final DialogueManager dialogue;
     private final NameTagManager nameTags;
+    private final MaidItems items;
 
     /** 魂符自助领取的冷却：玩家 UUID → 可以再领的时间戳（毫秒）。 */
     private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
-                          NameTagManager nameTags) {
+                          NameTagManager nameTags, MaidItems items) {
         this.maidManager = maidManager;
         this.models = models;
         this.plugin = plugin;
@@ -82,6 +82,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         this.affection = affection;
         this.dialogue = dialogue;
         this.nameTags = nameTags;
+        this.items = items;
     }
 
     @Override
@@ -548,12 +549,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 return;
             }
         }
-        Material material = Material.matchMaterial(
-                plugin.getConfig().getString("interaction.talisman-material", "AMETHYST_SHARD"));
-        if (material == null) {
-            material = Material.AMETHYST_SHARD;
-        }
-        player.getInventory().addItem(MaidItems.talisman(plugin, material, amount)).values()
+        player.getInventory().addItem(items.talisman(amount)).values()
                 .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
         talismanReadyAt.put(player.getUniqueId(), now + cooldownMs);
         Messages.send(player, "talisman-received", Map.of("amount", String.valueOf(amount)));

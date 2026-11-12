@@ -50,17 +50,19 @@ public final class MaidDamageListener implements Listener {
     private final AffectionManager affection;
     private final DialogueManager dialogue;
     private final MaidRepository repository;
+    private final MaidItems items;
 
     private final Map<UUID, Long> hurtDialogueAt = new HashMap<>();
     private final Map<UUID, Long> hurtAffectionAt = new HashMap<>();
 
     public MaidDamageListener(Plugin plugin, MaidManager maidManager, AffectionManager affection,
-                              DialogueManager dialogue, MaidRepository repository) {
+                              DialogueManager dialogue, MaidRepository repository, MaidItems items) {
         this.plugin = plugin;
         this.maidManager = maidManager;
         this.affection = affection;
         this.dialogue = dialogue;
         this.repository = repository;
+        this.items = items;
     }
 
     /**
@@ -195,7 +197,7 @@ public final class MaidDamageListener implements Listener {
 
     /** 铃铛优先塞主人背包，放不下才掉在原地（蓝图 P4）。 */
     private void giveBell(Maid maid, Location deathLoc) {
-        ItemStack bell = MaidItems.bell(plugin, maid);
+        ItemStack bell = items.bell(maid);
         Player owner = Bukkit.getPlayer(maid.getOwnerUuid());
         if (owner == null) {
             plugin.getLogger().info("主人不在线，" + maid.getName() + " 的铃铛掉落在 " + deathLoc);

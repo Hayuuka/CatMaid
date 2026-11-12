@@ -178,6 +178,15 @@ combat:
 
 # ---- Phase 9 体验扩展 ----
 
+# 依赖模式（蓝图 P9-9.3）：决定凭证物品（铃铛/魂符）用原版材质还是 CraftEngine 自定义物品。
+# 两种模式的物品互相认——切换后玩家手里的旧铃铛/旧魂符不作废（身份认的是 catmaid 自己的 PDC）。
+dependency:
+  provider: vanilla        # vanilla | craftengine
+  craftengine:
+    # craftengine 模式下要用 CE 物品 ID。CE 侧没有定义这些 ID 时自动回落原版材质并打一条告警
+    bell-id: catmaid:bell
+    talisman-id: catmaid:talisman
+
 # 主副手物品显示：BetterModel 接管渲染后原版装备层被模型盖住，主手举剑也看不见。
 # 这里把主手/副手物品单独显示出来（盔甲仍不显示——模型自带服装）。
 hand-item:

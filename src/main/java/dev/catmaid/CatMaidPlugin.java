@@ -20,6 +20,7 @@ import dev.catmaid.maid.ModelAnimator;
 import dev.catmaid.maid.ModelApplier;
 import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.maid.NameTagManager;
+import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.trait.TraitInfo;
@@ -46,6 +47,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private ModelApplier modelApplier;
     private NameTagManager nameTagManager;
     private HandItemDisplays handItemDisplays;
+    private MaidItems maidItems;
     private BehaviorManager behaviorManager;
     private BukkitTask saveTask;
     private BukkitTask restoreTask;
@@ -87,6 +89,9 @@ public final class CatMaidPlugin extends JavaPlugin {
         }
 
         repository = new MaidRepository(database, getLogger());
+        // 凭证物品的唯一工厂（P9）：provider=vanilla 用原版物品，craftengine 用 CE 自定义物品
+        maidItems = new MaidItems(this, getLogger());
+        getLogger().info("凭证物品 " + maidItems.describe());
         modelRegistry = new ModelRegistry(getConfig());
         modelApplier = new ModelApplier(getLogger());
         // 台词与好感度先于行为层创建：BehaviorManager 每 tick 要推这两件事（P4），
@@ -117,21 +122,23 @@ public final class CatMaidPlugin extends JavaPlugin {
         GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier, dialogueManager);
         getServer().getPluginManager().registerEvents(guiManager, this);
         getServer().getPluginManager().registerEvents(
-                new MaidInteractListener(maidManager, guiManager, this, affectionManager, dialogueManager), this);
+                new MaidInteractListener(maidManager, guiManager, this, affectionManager, dialogueManager,
+                        maidItems), this);
 
         // 养成层：受击/死亡转铃铛、铃铛复活、魂符召唤（P4）
         getServer().getPluginManager().registerEvents(
-                new MaidDamageListener(this, maidManager, affectionManager, dialogueManager, repository), this);
+                new MaidDamageListener(this, maidManager, affectionManager, dialogueManager, repository,
+                        maidItems), this);
         getServer().getPluginManager().registerEvents(
                 new TalismanListener(this, maidManager, modelRegistry, modelApplier,
-                        dialogueManager, repository), this);
+                        dialogueManager, repository, maidItems), this);
 
         // 战斗层：主人/女仆挨打 → 战斗模式的女仆锁定反击目标（P7）
         getServer().getPluginManager().registerEvents(
                 new OwnerProtectionListener(this, maidManager, behaviorManager), this);
 
         CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this, guiManager,
-                affectionManager, dialogueManager, nameTagManager);
+                affectionManager, dialogueManager, nameTagManager, maidItems);
         PluginCommand pluginCommand = getCommand("catmaid");
         if (pluginCommand != null) {
             pluginCommand.setExecutor(command);

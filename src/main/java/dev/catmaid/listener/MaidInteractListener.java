@@ -40,17 +40,19 @@ public final class MaidInteractListener implements Listener {
     private final Plugin plugin;
     private final AffectionManager affection;
     private final DialogueManager dialogue;
+    private final MaidItems items;
 
     /** 喂食冷却：per-maid，不是 per-player。两个主人账号轮着喂同一只也该被拦。 */
     private final Map<UUID, Long> fedAt = new HashMap<>();
 
     public MaidInteractListener(MaidManager maidManager, GuiManager guiManager, Plugin plugin,
-                                AffectionManager affection, DialogueManager dialogue) {
+                                AffectionManager affection, DialogueManager dialogue, MaidItems items) {
         this.maidManager = maidManager;
         this.guiManager = guiManager;
         this.plugin = plugin;
         this.affection = affection;
         this.dialogue = dialogue;
+        this.items = items;
     }
 
     @EventHandler
@@ -104,7 +106,7 @@ public final class MaidInteractListener implements Listener {
 
         // 服务端拿不到物品的中文名（api-facts 16.8），台词里的 {item} 用材质名代替
         String itemName = hand.getType().name().toLowerCase(Locale.ROOT).replace('_', ' ');
-        MaidItems.consumeOneInMainHand(player, hand);
+        items.consumeOne(player, hand);
         playEatEffect(maid);
         affection.apply(maid, affection.gain(AffectionReason.FEED), AffectionReason.FEED);
         dialogue.send(maid, "on_feed", Map.of("item", itemName));
