@@ -606,19 +606,32 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
         String key = args[2];
         UUID maidId = parseUuid(key);
-        boolean removed = false;
+        int removed = 0;
+        String removedName = key;
         if (maidId != null && maidManager.byId(maidId).isPresent()) {
-            removed = maidManager.remove(maidId);
+            // 先把名字取出来：remove 之后对象就查不到了，提示里说 UUID 对管理员没意义
+            removedName = maidManager.byId(maidId).get().getName();
+            removed = maidManager.remove(maidId) ? 1 : 0;
         } else {
             OfflinePlayer target = resolvePlayer(key);
             if (target != null) {
+                // 按玩家批量清理时逐只移除：byOwner 返回的是新列表，边遍历边删是安全的
                 for (Maid maid : maidManager.byOwner(target.getUniqueId())) {
-                    removed |= maidManager.remove(maid.getId());
+                    if (maidManager.remove(maid.getId())) {
+                        removed++;
+                    }
                 }
             }
         }
-        Messages.send(sender, removed ? "remove-success" : "maid-not-found",
-                Map.of("name", key));
+        if (removed == 0) {
+            Messages.send(sender, "maid-not-found", Map.of("name", key));
+        } else if (removed == 1) {
+            Messages.send(sender, "remove-success", Map.of("name", removedName));
+        } else {
+            // 一次清掉好几只时说"已送走 loadtest"会让人以为只删了一只（P8 压测时踩到）
+            Messages.send(sender, "remove-all-success", Map.of(
+                    "player", key, "count", String.valueOf(removed)));
+        }
     }
 
     private void list(CommandSender sender, String[] args) {

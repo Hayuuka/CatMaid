@@ -13,6 +13,7 @@ summon-success: "<green>已召唤女仆 {name}（属于 {owner}，模型 {model}
 summon-max: "<red>该玩家最多只能拥有 {max} 只女仆。"
 summon-no-model: "<red>配置里没有任何可用模型，请检查 config.yml 的 models。"
 remove-success: "<yellow>已送走女仆 {name}。"
+remove-all-success: "<yellow>已送走 {player} 名下的 {count} 只女仆。"
 maid-not-found: "<red>找不到这个女仆：{name}"
 not-your-maid: "<red>她不是你的女仆哦。"
 
