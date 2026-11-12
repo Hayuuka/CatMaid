@@ -27,7 +27,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 农业：在 home（或自身）周围找成熟作物，走过去收割（蓝图 P5）。
+ * 农业：在 home（或自身）周围找成熟作物，走过去收割并补种（蓝图 P5）。
  *
  * <p>节奏：每 20 tick 决策一次，按 {@code tick % 20 == npcId % 20} 错峰。一次扫描是 17×3×17 ≈ 870 个方块，
  * 每 tick 做会把主线程吃掉，所以只能在错峰到自己的那一 tick 里做（agent.md 7.1）。
@@ -53,6 +53,18 @@ public final class FarmMode implements BehaviorMode {
 
     private static final List<String> DEFAULT_CROPS = List.of(
             "WHEAT", "CARROTS", "POTATOES", "BEETROOTS", "NETHER_WART", "COCOA");
+
+    /**
+     * 作物 → 补种用的种子。没收成的作物（表里没有）就不补种，让主人自己决定。
+     * 注意胡萝卜/马铃薯的"种子"就是作物本身，而西瓜南瓜的种子长出来的是瓜秧、不在作物表里。
+     */
+    private static final Map<Material, Material> SEEDS = Map.of(
+            Material.WHEAT, Material.WHEAT_SEEDS,
+            Material.CARROTS, Material.CARROT,
+            Material.POTATOES, Material.POTATO,
+            Material.BEETROOTS, Material.BEETROOT_SEEDS,
+            Material.NETHER_WART, Material.NETHER_WART,
+            Material.COCOA, Material.COCOA_BEANS);
 
     private final FileConfiguration config;
     private final DialogueManager dialogue;
@@ -219,13 +231,14 @@ public final class FarmMode implements BehaviorMode {
      */
     private void harvest(Maid maid, Block block) {
         ItemStack tool = maid.inventory().getMainHand();
+        Material cropType = block.getType();
         Collection<ItemStack> drops = tool == null || tool.getType().isAir()
                 ? block.getDrops()
                 : block.getDrops(tool);
         BlockData harvested = block.getBlockData();
         Location center = block.getLocation().add(0.5, 0.5, 0.5);
         World world = block.getWorld();
-        // 关掉物理更新：马上可能要补种，否则这一格会先被邻接更新刷一遍
+        // 关掉物理更新：马上要补种，否则这一格会先被邻接更新刷一遍
         block.setType(Material.AIR, false);
         world.playSound(center, Sound.BLOCK_CROP_BREAK, 0.8f, 1.3f);
         world.spawnParticle(Particle.BLOCK, center, 12, 0.25, 0.25, 0.25, harvested);
@@ -239,6 +252,29 @@ public final class FarmMode implements BehaviorMode {
                 world.dropItemNaturally(center, rest);
             }
         }
+        // 先入包再补种：刚收下来的种子可以直接拿去补，不必等主人塞种子
+        replant(block, cropType, harvested, maid);
+    }
+
+    /**
+     * 补种：从女仆背包扣 1 个对应种子，把这一格种回 0 岁。
+     *
+     * <p>没种子就空着（不报错、不催主人），下一轮扫描自然不会再把这一格当目标。
+     * 用 {@code setBlockData(..., false)} 而不是 {@code setType}：保留原方块的朝向（可可果挂在原木的那一面）。
+     */
+    private void replant(Block block, Material cropType, BlockData harvested, Maid maid) {
+        if (!config.getBoolean("farm.replant", true)) {
+            return;
+        }
+        Material seed = SEEDS.get(cropType);
+        if (seed == null || !maid.inventory().consumeOne(seed)) {
+            return;
+        }
+        if (!(harvested instanceof Ageable ageable)) {
+            return;
+        }
+        ageable.setAge(0);
+        block.setBlockData(harvested, false);
     }
 
     // ---- 卡死 ----

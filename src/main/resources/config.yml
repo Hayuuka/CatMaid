@@ -43,6 +43,7 @@ idle:
 farm:
   radius: 8          # 以中心向外扫几格（x/z），y 方向只扫 -1..+1，避免上下乱找
   center: home       # home = 在/家附近干；self = 跟着自己脚下走（适合随身带出去开荒）
+  replant: true      # 收割后自动补种（从女仆背包扣 1 个对应种子；没种子就空着）
   crops:             # 允许收割的作物（必须是原版 Ageable 作物，成熟判定靠 age 到顶）
     - WHEAT
     - CARROTS

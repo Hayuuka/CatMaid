@@ -104,8 +104,30 @@ public final class MaidInventory {
         return remaining;
     }
 
-    /** 供持久化使用：只输出非空槽位。 */
-    public Map<Integer, byte[]> serialize() {
+    /**
+     * 扣掉 1 个指定材质，扣成功返回 true。
+     *
+     * <p>只搜存储位（6 起）：装备位里的东西是主人特意放的，农活不该动她手上的工具/副手。
+     * 目前只有农业补种用（P5）。
+     */
+    public boolean consumeOne(Material material) {
+        int end = EQUIPMENT_SLOTS + storageCapacity;
+        for (int i = EQUIPMENT_SLOTS; i < end; i++) {
+            ItemStack existing = slots[i];
+            if (existing == null || existing.getType() != material) {
+                continue;
+            }
+            if (existing.getAmount() <= 1) {
+                slots[i] = null;
+            } else {
+                existing.setAmount(existing.getAmount() - 1);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    /** 供持久化使用：只输出非空槽位。 */    public Map<Integer, byte[]> serialize() {
         Map<Integer, byte[]> out = new LinkedHashMap<>();
         for (int i = 0; i < TOTAL_SLOTS; i++) {
             if (slots[i] != null) {
