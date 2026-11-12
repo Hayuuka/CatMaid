@@ -63,12 +63,23 @@ public final class MaidManager {
     /** onEnable 调用：把库里的女仆读进内存。 */
     public void loadAll() {
         for (Maid maid : repository.loadAll()) {
+            maid.setMaxHealth(maxHealth());
             maids.put(maid.getId(), maid);
             if (maid.isAlive()) {
                 awaitingNpc.add(maid.getId());
             }
         }
         logger.info("已载入 " + maids.size() + " 只女仆");
+    }
+
+    /**
+     * 实体就绪后要补的东西：装备写回 + 血量上限（细节见 {@link Maid#applyVitals()}）。
+     *
+     * <p>所有生成实体的路径都要调这里——恢复、召唤、上线补挂、铃铛复活。漏一处就会出现
+     * "她只有 20 血"或"血条 20/40"，而且只在某些路径下复现，极难排查（api-facts 20.9-A5）。
+     */
+    public void onEntityReady(Maid maid) {
+        maid.applyVitals();
     }
 
     /**
@@ -150,7 +161,7 @@ public final class MaidManager {
             npc.spawn(target);
         }
         modelApplier.apply(npc, maid.getModelId());
-        maid.applyEquipment();
+        onEntityReady(maid);
     }
 
     // ---- 召唤 / 移除 ----
@@ -189,6 +200,7 @@ public final class MaidManager {
         maid.setAffection(config.getDouble("general.initial-affection", 10));
         maid.setHome(spawn);
         maid.setAlive(true);
+        maid.setMaxHealth(maxHealth());
 
         NPC npc = CitizensAPI.getNPCRegistry().createNPC(EntityType.PLAYER, maid.getName());
         npc.setProtected(false);
@@ -210,7 +222,7 @@ public final class MaidManager {
         }
 
         modelApplier.apply(npc, resolvedModel);
-        maid.applyEquipment();
+        onEntityReady(maid);
         playSummonEffect(spawn);
 
         maids.put(maid.getId(), maid);
@@ -267,6 +279,11 @@ public final class MaidManager {
 
     public int maxPerPlayer() {
         return config.getInt("general.max-per-player", 2);
+    }
+
+    /** 女仆血量上限（蓝图 P7 默认 40）：玩家型 NPC 默认 20 血，抗不住战斗模式的换血。 */
+    private double maxHealth() {
+        return Math.max(1, config.getDouble("combat.maid-max-health", 40));
     }
 
     // ---- 持久化 ----

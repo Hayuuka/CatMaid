@@ -133,7 +133,7 @@ public final class TalismanListener implements Listener {
         // 重新绑一次 trait：如果插件在女仆死亡期间重启过，Citizens 读回的 trait 实例里 maid 是 null
         // （启动时不会为 dead 女仆做恢复），不绑会导致后续 onSpawn 里的装备写回失效
         npc.getOrAddTrait(MaidTrait.class).bind(maid);
-        maid.applyEquipment();
+        maidManager.onEntityReady(maid);
         // REVIVE 的数值是 0（死亡时已经扣过），所以这里不需要动好感度，
         // 只是把状态从"铃铛"翻回"活着"
 

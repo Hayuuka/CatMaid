@@ -35,7 +35,7 @@ public final class PlayerConnectionListener implements Listener {
             }
             npc.getOrAddTrait(MaidTrait.class).bind(maid);
             npc.spawn(target);
-            maid.applyEquipment();
+            maidManager.onEntityReady(maid);
         }
     }
 

@@ -43,7 +43,9 @@ public final class MaidTrait extends Trait {
     @Override
     public void onSpawn() {
         if (maid != null) {
-            maid.applyEquipment();
+            // 装备与血量上限都要在每次生成后补：Citizens 重建实体时这两样都回到默认值，
+            // 而启动恢复时本回调早于 bind()（maid 为 null），由 MaidManager#attach 兜底
+            maid.applyVitals();
         }
     }
 

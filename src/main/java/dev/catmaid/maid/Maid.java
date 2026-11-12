@@ -4,6 +4,8 @@ import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.attribute.Attribute;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.inventory.EntityEquipment;
@@ -31,6 +33,8 @@ public final class Maid {
     private boolean sitting;
     private Location home;
     private int npcId = -1;
+    /** 血量上限，来自 {@code combat.maid-max-health}（启动/召唤时由 MaidManager 灌入）。 */
+    private double maxHealth = 40;
 
     private final MaidInventory inventory = new MaidInventory();
     private final MaidStats stats = new MaidStats();
@@ -132,6 +136,15 @@ public final class Maid {
         this.npcId = npcId;
     }
 
+    public double getMaxHealth() {
+        return maxHealth;
+    }
+
+    /** 由 MaidManager 按 config 灌入（不落库：换配置重启即可生效，不需要每人存一份）。 */
+    public void setMaxHealth(double maxHealth) {
+        this.maxHealth = maxHealth;
+    }
+
     public MaidInventory inventory() {
         return inventory;
     }
@@ -184,6 +197,38 @@ public final class Maid {
 
     private static String slotName(ItemStack item) {
         return item == null || item.getType().isAir() ? "空" : item.getType().name();
+    }
+
+    /**
+     * 实体就绪后要补的两件事：装备写回 + 血量上限。
+     *
+     * <p>为什么必须是一个方法：Citizens 每次 spawn 都会重建实体，只在 onEnable 设一次会在
+     * despawn/重生成后失效；漏掉任何一条生成路径，表现就是"她只有 20 血"或"血条 20/40"
+     * （api-facts 20.9-A5）。所以 {MaidTrait#onSpawn}、召唤、恢复、上线补挂、铃铛复活
+     * 统一走这里。
+     */
+    public void applyVitals() {
+        applyEquipment();
+        applyMaxHealth();
+    }
+
+    /**
+     * 把血量上限写进实体并回满。
+     *
+     * <p>玩家型 NPC 默认 20 血，不改上限她两三下就倒；而改上限不重设当前血量会留下
+     * "20/40"的半血条，所以两步必须一起做。
+     */
+    private void applyMaxHealth() {
+        LivingEntity entity = entity();
+        if (entity == null) {
+            return;
+        }
+        AttributeInstance attribute = entity.getAttribute(Attribute.MAX_HEALTH);
+        if (attribute == null) {
+            return;
+        }
+        attribute.setBaseValue(maxHealth);
+        entity.setHealth(attribute.getValue());
     }
 
     /** 入虚拟背包；放不下时返回 false（调用方决定掉落到地面）。 */
