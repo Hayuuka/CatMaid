@@ -9,6 +9,7 @@ import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.gui.GuiManager;
 import dev.catmaid.listener.MaidDamageListener;
 import dev.catmaid.listener.MaidInteractListener;
+import dev.catmaid.listener.OwnerProtectionListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.listener.TalismanListener;
 import dev.catmaid.maid.AffectionTable;
@@ -118,6 +119,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         getServer().getPluginManager().registerEvents(
                 new TalismanListener(this, maidManager, modelRegistry, modelApplier,
                         dialogueManager, repository), this);
+
+        // 战斗层：主人/女仆挨打 → 战斗模式的女仆锁定反击目标（P7）
+        getServer().getPluginManager().registerEvents(
+                new OwnerProtectionListener(this, maidManager, behaviorManager), this);
 
         CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this);
         PluginCommand pluginCommand = getCommand("catmaid");

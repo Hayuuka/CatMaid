@@ -154,6 +154,8 @@ combat:
   ranged-enabled: true
   ranged-range: 15        # 射程。超过这个距离就走近，15 格外箭下坠明显
   arrow-damage: 5.0       # 箭的基础伤害（不含好感加成）；原版玩家满蓄力箭约 6-9
+  # 主人保护：主人被打时，她名下战斗模式的女仆立刻锁定攻击者（她也挨打时同样反击）
+  protect-owner: true
   # 女仆血量上限。玩家型 NPC 默认 20 血，不改上限她打不过两只僵尸；
   # 每次实体生成都会重设上限并回满（Citizens 重建实体会把这两样都丢掉）
   maid-max-health: 40
