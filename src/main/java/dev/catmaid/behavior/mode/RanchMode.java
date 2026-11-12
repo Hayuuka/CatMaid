@@ -10,18 +10,27 @@ import dev.catmaid.maid.MaidInventory;
 import org.bukkit.DyeColor;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Animals;
 import org.bukkit.entity.Cow;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Sheep;
+import org.bukkit.entity.Tameable;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.BlockVector;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
@@ -75,22 +84,36 @@ public final class RanchMode implements BehaviorMode {
     private final AffectionManager affection;
     private final DialogueManager dialogue;
     private final Map<UUID, State> states = new HashMap<>();
+    /** 干活顺序，来自 {@code ranch.action-priority}。构造时解析一次：改配置要重启（P8 才做 reload）。 */
+    private final List<String> priority = new ArrayList<>();
+
+    private static final List<String> DEFAULT_PRIORITY = List.of("BREED", "SHEAR", "MILK");
 
     public RanchMode(FileConfiguration config, AffectionManager affection, DialogueManager dialogue) {
         this.config = config;
         this.affection = affection;
         this.dialogue = dialogue;
+        List<String> configured = config.getStringList("ranch.action-priority");
+        for (String name : configured.isEmpty() ? DEFAULT_PRIORITY : configured) {
+            priority.add(name.trim().toUpperCase(Locale.ROOT));
+        }
     }
 
     /** 当前这一步要做什么。同一时刻只有一件事，避免导航目标互相打架。 */
     private enum Action {
-        PICKUP, SHEAR, MILK
+        PICKUP, BREED, SHEAR, MILK
     }
 
     /** 每只女仆的畜牧状态。Mode 是单例，状态必须按女仆分，否则十只会抢同一个目标。 */
     private static final class State {
         private Action action;
         private Entity target;
+        /** 繁殖用的第二只（还没喂的那只）。喂完第一只就换成它做 target。 */
+        private Animals partner;
+        /** 繁殖里已经喂过的那只。非空 = 正在走第二趟，凑齐两只才结算。 */
+        private Animals mate;
+        /** 这一次繁殖用的饲料（按动物的类型定，选中时就定下来，走过去的路上背包被翻动也不换）。 */
+        private Material food;
         private Location lastPos;
         private long lastProgressAt;
         /** 下一次允许动作的时间戳（毫秒）。 */
@@ -239,10 +262,97 @@ public final class RanchMode implements BehaviorMode {
             state.lastPos = null;
             return;
         }
-        if (selectShear(maid, entity, state)) {
-            return;
+        // 顺序由 ranch.action-priority 决定（蓝图 P6）；写错的词直接跳过，不让一个笔误打死整个模式
+        for (String name : priority) {
+            boolean found = switch (name) {
+                case "BREED" -> selectBreed(maid, entity, state);
+                case "SHEAR" -> selectShear(maid, entity, state);
+                case "MILK" -> selectMilk(maid, entity, state);
+                default -> false;
+            };
+            if (found) {
+                return;
+            }
         }
-        selectMilk(maid, entity, state);
+    }
+
+    /**
+     * 繁殖：找一对能生的动物。
+     *
+     * <p>成对判定比蓝图多两条：两只都必须成年且 {@code canBreed()}（否则她会对着小牛和冷却中的牛
+     * 一直喂小麦，api-facts 19.9-5.3），并且跳过已驯服的（别去配主人家的狗和猫）。
+     *
+     * <p>饲料要 2 份：原版是"一只一份"，只有 1 份时喂完一只另一只没得吃，等于白喂。
+     */
+    private boolean selectBreed(Maid maid, LivingEntity entity, State state) {
+        Location from = entity.getLocation();
+        Map<EntityType, List<Animals>> groups = new EnumMap<>(EntityType.class);
+        for (Entity candidate : entity.getWorld().getNearbyEntities(from, radius(), radius(), radius())) {
+            if (!(candidate instanceof Animals animal) || !animal.isAdult() || !animal.canBreed()
+                    || animal.isDead() || (animal instanceof Tameable tamed && tamed.isTamed())
+                    || blacklisted(state, animal.getLocation())) {
+                continue;
+            }
+            groups.computeIfAbsent(animal.getType(), key -> new ArrayList<>()).add(animal);
+        }
+
+        Animals first = null;
+        Animals second = null;
+        Material chosen = null;
+        double bestScore = Double.MAX_VALUE;
+        for (List<Animals> group : groups.values()) {
+            if (group.size() < 2) {
+                continue;
+            }
+            group.sort(Comparator.comparingDouble(animal -> animal.getLocation().distanceSquared(from)));
+            Animals a = group.get(0);
+            Animals b = group.get(1);
+            Material food = foodFor(maid, a);
+            if (food == null || count(maid, food) < 2) {
+                continue;
+            }
+            double score = a.getLocation().distanceSquared(from) + b.getLocation().distanceSquared(from);
+            if (score < bestScore) {
+                bestScore = score;
+                first = a;
+                second = b;
+                chosen = food;
+            }
+        }
+        if (first == null) {
+            return false;
+        }
+        state.action = Action.BREED;
+        state.target = first;
+        state.partner = second;
+        state.mate = null;
+        state.food = chosen;
+        state.lastPos = null;
+        return true;
+    }
+
+    /**
+     * 这种动物吃什么。
+     *
+     * <p>{@code ranch.breed-food} 只用来覆盖特例；没写的一律问原版
+     * （{@code Animals#isBreedItem} 直接回答"这食物能不能喂它"），省得把七八种动物全配一遍。
+     */
+    private Material foodFor(Maid maid, Animals sample) {
+        String configured = config.getString("ranch.breed-food." + sample.getType().name());
+        if (configured != null) {
+            Material material = Material.matchMaterial(configured);
+            if (material != null) {
+                return material;
+            }
+        }
+        int end = MaidInventory.EQUIPMENT_SLOTS + maid.inventory().storageCapacity();
+        for (int slot = MaidInventory.EQUIPMENT_SLOTS; slot < end; slot++) {
+            ItemStack stack = maid.inventory().get(slot);
+            if (stack != null && sample.isBreedItem(stack)) {
+                return stack.getType();
+            }
+        }
+        return null;
     }
 
     /**
@@ -338,6 +448,7 @@ public final class RanchMode implements BehaviorMode {
             return collectible(item) && !blacklisted(state, item.getLocation());
         }
         return switch (state.action) {
+            case BREED -> target instanceof Animals animal && animal.isAdult() && animal.canBreed();
             case SHEAR -> target instanceof Sheep sheep && sheep.isAdult() && !sheep.isSheared();
             case MILK -> target instanceof Cow cow && cow.isAdult();
             default -> true;
@@ -361,17 +472,70 @@ public final class RanchMode implements BehaviorMode {
         }
     }
 
-    /** 到了就干活。先把目标与动作取出来再 reset，免得收尾时把要用的实体清空。 */
+    /** 到了就干活。先把目标与动作取出来，再交给各动作自己收尾（繁殖是两趟，不能提前清状态）。 */
     private void execute(Maid maid, State state) {
-        Entity target = state.target;
-        Action action = state.action;
-        reset(state);
-        state.nextActionAt = System.currentTimeMillis() + ACTION_COOLDOWN_MS;
-        switch (action) {
-            case PICKUP -> collect(maid, (Item) target, state);
-            case SHEAR -> shear(maid, (Sheep) target);
-            case MILK -> milk(maid, (Cow) target);
+        switch (state.action) {
+            case PICKUP -> {
+                Item item = (Item) state.target;
+                finish(state);
+                collect(maid, item, state);
+            }
+            case SHEAR -> {
+                Sheep sheep = (Sheep) state.target;
+                finish(state);
+                shear(maid, sheep);
+            }
+            case MILK -> {
+                Cow cow = (Cow) state.target;
+                finish(state);
+                milk(maid, cow);
+            }
+            case BREED -> breed(maid, state);
         }
+    }
+
+    /**
+     * 繁殖：一只一份地喂。
+     *
+     * <p>分两趟走——先喂近的那只、再走去它对象那儿喂第二只。原版只有两只都进了求偶状态才会生，
+     * 所以好感与统计在第二只喂上之后才结算；中途对象被牵走就白喂一次，不扣好感也不给奖励。
+     */
+    private void breed(Maid maid, State state) {
+        Animals animal = (Animals) state.target;
+        if (!feed(maid, animal, state.food)) {
+            finish(state);
+            return;
+        }
+        hearts(animal);
+        Animals partner = state.partner;
+        state.partner = null;
+        if (state.mate == null && partner != null && partner.isValid() && !partner.isDead()
+                && partner.canBreed()) {
+            // 第一只已点上红心，转身去找它对象；这一趟不收尾
+            state.mate = animal;
+            state.target = partner;
+            state.lastPos = null;
+            return;
+        }
+        if (state.mate != null) {
+            maid.stats().addBreed();
+            reward(maid);
+        }
+        finish(state);
+    }
+
+    /** 喂一口：扣 1 份饲料、让它进求偶。饲料没了就返回 false（走过去的路上被主人拿走了也算）。 */
+    private boolean feed(Maid maid, Animals animal, Material food) {
+        if (food == null || !maid.inventory().consumeOne(food)) {
+            return false;
+        }
+        animal.setBreed(true);
+        animal.getWorld().playSound(animal.getLocation(), Sound.ENTITY_GENERIC_EAT, 1f, 1f);
+        return true;
+    }
+
+    private static void hearts(Entity entity) {
+        entity.getWorld().spawnParticle(Particle.HEART, entity.getLocation().add(0, 1, 0), 6, 0.3, 0.3, 0.3, 0);
     }
 
     /**
@@ -477,7 +641,16 @@ public final class RanchMode implements BehaviorMode {
     private static void reset(State state) {
         state.action = null;
         state.target = null;
+        state.partner = null;
+        state.mate = null;
+        state.food = null;
         state.lastPos = null;
+    }
+
+    /** 这一趟做完了：收尾 + 进动作冷却（蓝图 P6 的 2 秒，防止一秒内连剪三只羊）。 */
+    private static void finish(State state) {
+        reset(state);
+        state.nextActionAt = System.currentTimeMillis() + ACTION_COOLDOWN_MS;
     }
 
     private int radius() {

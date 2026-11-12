@@ -58,6 +58,15 @@ farm:
 ranch:
   radius: 8          # 找动物/找掉落物的半径（以女仆脚下为中心）
   pickup: true       # 是否顺手捡地面产物（鸡蛋、羊毛、掉落物）。关掉就只管动物
+  # 干活顺序：排前面的先干。没活干时按这个顺序一路找下去
+  action-priority: [ BREED, SHEAR, MILK ]
+  # 饲料映射：只用来覆盖特例，没写在这里的动物由原版判定（Animals#isBreedItem）
+  # 繁殖一次要 2 份（一只一份），不够就等她回来看见主人补给
+  breed-food:
+    COW: WHEAT
+    SHEEP: WHEAT
+    PIG: CARROT
+    CHICKEN: WHEAT_SEEDS
 
 # ---- Phase 4 养成层 ----
 
