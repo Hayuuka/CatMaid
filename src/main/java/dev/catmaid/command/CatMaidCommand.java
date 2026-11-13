@@ -42,8 +42,12 @@ import java.util.UUID;
  * <p>Phase 1 实现了 admin 三个子命令，Phase 4 加了 talisman，Phase 8 补齐玩家侧
  * （gui/mode/sethome/info/rename/title）与 admin 的 setaffection/reload。
  *
- * <p>玩家侧命令都要先"找到说的是哪只女仆"：{@link #resolveMaid(Player)} 先找 8 格内的，
- * 实在找不到才接受"你只有一只活着"的退让——绝不跨越到别人的女仆（api-facts 22.3-3）。
+ * <p>玩家侧命令都要先"找到说的是哪只女仆"：{@link #resolveMaid(Player, String)} 有不带名字的
+ * 就近策略（先找 8 格内的，实在找不到才接受"你只有一只活着"的退让）和不给名字时的按名定向策略。
+ * 两条路都只在自己名下的女仆里找——绝不跨越到别人的女仆（api-facts 22.3-3）。
+ *
+ * <p>P10-10.2 起所有玩家侧命令都接受一个可选的"女仆名"参数（放在最后），否则
+ * {@code max-per-player} 大于 1 时第二只根本够不着：命令只会认最近那一只。
  */
 public final class CatMaidCommand implements CommandExecutor, TabCompleter {
 
@@ -96,9 +100,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
-            case "gui" -> gui(sender);
+            case "gui" -> gui(sender, args);
             case "mode" -> mode(sender, args);
-            case "sethome" -> sethome(sender);
+            case "sethome" -> sethome(sender, args);
             case "info" -> info(sender);
             case "rename" -> rename(sender, args);
             case "title" -> title(sender, args);
@@ -111,9 +115,11 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * 打开最近女仆的主菜单。命令只是"找对人再交给 GUI"，界面逻辑一律留在 GuiManager。
+     * 打开一只女仆的主菜单。命令只是"找对人再交给 GUI"，界面逻辑一律留在 GuiManager。
+     *
+     * @param args 第二个参数可以是女仆名（不给就按就近策略）
      */
-    private void gui(CommandSender sender) {
+    private void gui(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
             Messages.send(sender, "player-only");
             return;
@@ -122,7 +128,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "no-permission");
             return;
         }
-        Maid maid = resolveMaid(player);
+        Maid maid = resolveMaid(player, optionalArg(args, 1));
         if (maid == null) {
             return; // resolveMaid 已经给过提示
         }
@@ -130,10 +136,12 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * 切换最近女仆的模式。与 GUI 里的模式页是同一条链路：改字段 → 落库 → 模式台词 → 提示。
+     * 切换一只女仆的模式。与 GUI 里的模式页是同一条链路：改字段 → 落库 → 模式台词 → 提示。
      *
      * <p>台词这句不能省：蓝图 P4 规定模式切换要有反应，GUI 那条路已经接了，
      * 命令行不补就会出现"点界面她说话、打命令她不理"（P2 的代码里留了这条提醒）。
+     *
+     * <p>用法：{@code /catmaid mode <模式> [女仆名]}。
      */
     private void mode(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
@@ -153,7 +161,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "mode-invalid", Map.of("mode", args[1]));
             return;
         }
-        Maid maid = resolveMaid(player);
+        Maid maid = resolveMaid(player, optionalArg(args, 2));
         if (maid == null) {
             return;
         }
@@ -168,8 +176,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         Messages.send(player, "mode-changed", Map.of("name", maid.getName(), "mode", display));
     }
 
-    /** 把脚下位置设为最近女仆的家（农业模式 center=home、回家闲逛都看这个点）。 */
-    private void sethome(CommandSender sender) {
+    /** 把脚下位置设成一只女仆的家（农业模式 center=home、回家闲逛都看这个点）。 */
+    private void sethome(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
             Messages.send(sender, "player-only");
             return;
@@ -178,7 +186,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "no-permission");
             return;
         }
-        Maid maid = resolveMaid(player);
+        Maid maid = resolveMaid(player, optionalArg(args, 1));
         if (maid == null) {
             return;
         }
@@ -220,6 +228,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                     "affection", String.format(Locale.ROOT, "%.1f", maid.getAffection()),
                     "state", Messages.plain(stateKey(maid))));
         }
+        // 有了多女仆定向（P10-10.2）之后，列表不只是"看看"，还是选目标的入口
+        Messages.send(player, "info-target-hint");
     }
 
     /**
@@ -228,6 +238,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
      * <p>为什么直接拒绝 {@code <} {@code &} {@code §} 而不是"过滤"：这三个字符分别是
      * MiniMessage、旧颜色码、段落符的入口，玩家把 {@code <click:run_command:...>} 塞进名字
      * 后名牌会把整段当组件渲染（api-facts 22.3-4）。名字同时是 NPC 名与名牌文字，改完要一起刷。
+     *
+     * <p>用法：{@code /catmaid rename <新名字> [原名字]}。查重是必须的——名字是
+     * P10-10.2 定向操作的唯一把手，两只同名等于定向永久失效。
      */
     private void rename(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
@@ -242,7 +255,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "rename-usage");
             return;
         }
-        Maid maid = resolveMaid(player);
+        Maid maid = resolveMaid(player, optionalArg(args, 2));
         if (maid == null) {
             return;
         }
@@ -258,6 +271,13 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         if (newName.equals(oldName)) {
             Messages.send(player, "rename-same");
             return;
+        }
+        // 撞自己名下另一只的名字 → 拒绝：定向操作靠名字找她，重名之后两只都叫不动
+        for (Maid other : maidManager.byOwner(player.getUniqueId())) {
+            if (!other.getId().equals(maid.getId()) && other.getName().equalsIgnoreCase(newName)) {
+                Messages.send(player, "rename-conflict", Map.of("name", newName));
+                return;
+            }
         }
         maid.setName(newName);
         NPC npc = maid.npc();
@@ -283,7 +303,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "title-usage");
             return;
         }
-        Maid maid = resolveMaid(player);
+        Maid maid = resolveMaid(player, optionalArg(args, 2));
         if (maid == null) {
             return;
         }
@@ -396,6 +416,37 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         }
         Messages.send(player, "no-maid-nearby", Map.of("radius", String.valueOf(NEARBY_RADIUS)));
         return null;
+    }
+
+    /**
+     * 按名字定向的解析（P10-10.2）：多女仆时命令只认"最近一只"，第二只永远够不着，
+     * 所以各玩家侧命令都接受一个可选的名字参数，给了名字就在自己名下按名找。
+     *
+     * <p>名字查找不限状态（铃铛态/收纳态也认）：{@code bell} 与 {@code release} 本来就要
+     * 对这两种状态操作；gui/mode 这类对实体有意义的命令拿到离线女仆也只是行为空转，
+     * 不会出错，没必要为它们各写一套状态过滤。
+     */
+    private Maid resolveMaid(Player player, String name) {
+        if (name == null || name.isBlank()) {
+            return resolveMaid(player);
+        }
+        List<Maid> owned = maidManager.byOwner(player.getUniqueId());
+        if (owned.isEmpty()) {
+            Messages.send(player, "no-maid");
+            return null;
+        }
+        for (Maid maid : owned) {
+            if (maid.getName().equalsIgnoreCase(name.trim())) {
+                return maid;
+            }
+        }
+        Messages.send(player, "maid-name-not-found", Map.of("name", name));
+        return null;
+    }
+
+    /** 取第 {@code index} 个参数，越界返回 null——各命令用它读"可选的女仆名"。 */
+    private static String optionalArg(String[] args, int index) {
+        return args.length > index ? args[index] : null;
     }
 
     private void admin(CommandSender sender, String[] args) {
@@ -776,6 +827,23 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 modeNames.add(modeName(mode));
             }
             return filter(modeNames, args[1]);
+        }
+        // P10-10.2：可选女仆名参数的补全，只补自己名下的名字。
+        // mode/rename/title 的名字在第三个参数，gui/sethome 在第二个。
+        if (sender instanceof Player player && player.hasPermission("catmaid.use")) {
+            List<String> names = maidManager.byOwner(player.getUniqueId()).stream()
+                    .map(Maid::getName).toList();
+            if (!names.isEmpty()) {
+                if (args.length == 2 && (args[0].equalsIgnoreCase("gui")
+                        || args[0].equalsIgnoreCase("sethome"))) {
+                    return filter(names, args[1]);
+                }
+                if (args.length == 3 && (args[0].equalsIgnoreCase("mode")
+                        || args[0].equalsIgnoreCase("rename")
+                        || args[0].equalsIgnoreCase("title"))) {
+                    return filter(names, args[2]);
+                }
+            }
         }
         if (!args[0].equalsIgnoreCase("admin") || !sender.hasPermission("catmaid.admin")) {
             return List.of();

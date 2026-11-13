@@ -37,12 +37,12 @@ state-stored: "<light_purple>魂符中"
 
 help:
   - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> 当前可用命令："
-  - "<gray>/catmaid gui <dark_gray>—</dark_gray> 打开最近一只女仆的菜单"
-  - "<gray>/catmaid mode <模式> <dark_gray>—</dark_gray> 切换她的工作模式"
-  - "<gray>/catmaid sethome <dark_gray>—</dark_gray> 把脚下设为她的家"
+  - "<gray>/catmaid gui [名字] <dark_gray>—</dark_gray> 打开她的菜单（多只女仆时可用名字指定）"
+  - "<gray>/catmaid mode <模式> [名字] <dark_gray>—</dark_gray> 切换她的工作模式"
+  - "<gray>/catmaid sethome [名字] <dark_gray>—</dark_gray> 把脚下设为她的家"
   - "<gray>/catmaid info <dark_gray>—</dark_gray> 查看自己女仆的状态"
-  - "<gray>/catmaid rename <名字> <dark_gray>—</dark_gray> 改名（好感够才行）"
-  - "<gray>/catmaid title <称呼> <dark_gray>—</dark_gray> 改她对你的称呼"
+  - "<gray>/catmaid rename <名字> [原名字] <dark_gray>—</dark_gray> 改名（好感够才行）"
+  - "<gray>/catmaid title <称呼> [名字] <dark_gray>—</dark_gray> 改她对你的称呼"
   - "<gray>/catmaid talisman [数量] <dark_gray>—</dark_gray> 领几张空魂符（收纳/放出女仆）"
   - "<gray>/catmaid soul [数量] <dark_gray>—</dark_gray> 领几张未唤醒的魂符（召唤）"
   - "<gray>/catmaid admin summon <玩家> [模型]"
@@ -56,6 +56,12 @@ help:
 no-maid: "<red>你还没有女仆。用未唤醒的魂符召唤一只吧。"
 no-maid-nearby: "<red>附近（{radius} 格内）没有你的女仆。"
 
+# ---- Phase 10 多女仆定向 ----
+# 给了名字参数但自己名下没有叫这个的
+maid-name-not-found: "<red>你的女仆里没有叫「{name}」的。用 /catmaid info 看看她们叫什么。"
+# info 列表尾巴上的提示：列表同时是多女仆定向的选名入口
+info-target-hint: "<dark_gray>提示：/catmaid gui|mode|sethome|rename|title 可以带上 [名字] 指定操作对象。"
+
 # ---- Phase 8 玩家侧命令 ----
 mode-usage: "<red>用法：/catmaid mode <闲置|跟随|战斗|农业|畜牧>"
 mode-invalid: "<red>没有这种模式：{mode}（可选：闲置、跟随、战斗、农业、畜牧）"
@@ -66,11 +72,13 @@ home-set: "<green>已把 {name} 的家设在 {x}, {y}, {z}。"
 info-header: "<light_purple>你的女仆（共 {count} 只）："
 info-entry: "<gray>- {name} <dark_gray>|</dark_gray> {mode} <dark_gray>|</dark_gray> 好感 {affection} <dark_gray>|</dark_gray> {state}"
 
-rename-usage: "<red>用法：/catmaid rename <名字>"
+rename-usage: "<red>用法：/catmaid rename <名字> [原名字]"
 rename-need-affection: "<red>{name} 还不太愿意：好感度到「{level}」档（{min}）才能改名。"
 rename-invalid: "<red>名字要 2-12 个字，且不能含尖括号、& 和 § 这三个字符。"
 rename-same: "<gray>她本来就叫这个名字。"
 rename-success: "<green>{old} 现在叫 {name} 了。"
+# 重名会废掉多女仆定向（名字是唯一把手）
+rename-conflict: "<red>你的女仆里已经有叫「{name}」的了，换一个名字吧。"
 
 title-usage: "<red>用法：/catmaid title <称呼>"
 title-need-affection: "<red>{name} 还不太愿意：好感度到「{level}」档（{min}）才能改称呼。"
