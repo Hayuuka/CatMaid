@@ -138,6 +138,8 @@ public final class CatMaidPlugin extends JavaPlugin {
             pluginCommand.setExecutor(command);
             pluginCommand.setTabCompleter(command);
         }
+        // /catmaid release 的二次确认挂在聊天事件上（P10-10.4）
+        getServer().getPluginManager().registerEvents(command, this);
 
         // 每 5 分钟全量保存一次，兜住崩溃/强杀时的数据（正常停机与玩家下线的保存已覆盖大部分场景）
         saveTask = getServer().getScheduler().runTaskTimer(this, () -> maidManager.saveAll(),

@@ -166,6 +166,8 @@ public final class MaidDamageListener implements Listener {
         }
         maid.setAlive(false);
         maid.setSitting(false);
+        // 记下倒下时间：P10 的 /catmaid bell 过期免材料补发按它判断"倒下超过 N 天"
+        maid.setDeathAt(System.currentTimeMillis());
         Location loc = deathLoc == null ? null : deathLoc.clone();
         Entity killer = cause instanceof EntityDamageByEntityEvent byEntity ? byEntity.getDamager() : null;
 

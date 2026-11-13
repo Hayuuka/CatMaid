@@ -12,8 +12,11 @@ import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.npc.NPC;
+import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -23,6 +26,8 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
@@ -48,11 +53,17 @@ import java.util.UUID;
  *
  * <p>P10-10.2 起所有玩家侧命令都接受一个可选的"女仆名"参数（放在最后），否则
  * {@code max-per-player} 大于 1 时第二只根本够不着：命令只会认最近那一只。
+ *
+ * <p>P10-10.4 起本类还是 {@link Listener}：{@code /catmaid release} 的二次确认要求
+ * "在聊天栏再输入一次名字"（蓝图原文），聊天确认挂在 {@link #onAsyncChat(AsyncChatEvent)}。
  */
-public final class CatMaidCommand implements CommandExecutor, TabCompleter {
+public final class CatMaidCommand implements CommandExecutor, TabCompleter, Listener {
 
     /** 玩家侧命令认领女仆的半径（蓝图 P8：/catmaid gui 打开"最近一只（或 8 格内）"）。 */
     private static final int NEARBY_RADIUS = 8;
+
+    /** /catmaid release 聊天栏二次确认的等待窗口。 */
+    private static final long CONFIRM_TIMEOUT_MS = 30_000L;
 
     /**
      * 改名 / 改称呼解锁的档位（蓝图 P4：伙伴档起，默认即好感 40）。
@@ -78,6 +89,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
     /** 未唤醒魂符（召唤用）的领取冷却，与空魂符分开记——两者用途不同 */
     private final Map<UUID, Long> soulReadyAt = new HashMap<>();
+    /** /catmaid release 的待确认：玩家 UUID → 她要送走的那只（聊天栏再输入一次名字才生效）。 */
+    private final Map<UUID, PendingRelease> pendingRelease = new HashMap<>();
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
@@ -108,6 +121,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "title" -> title(sender, args);
             case "talisman" -> talisman(sender, args);
             case "soul" -> soul(sender, args);
+            case "bell" -> bell(sender, args);
+            case "release" -> release(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
         }
@@ -657,6 +672,176 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
         Messages.send(player, "soul-received", Map.of("amount", String.valueOf(amount)));
     }
 
+    // ---- P10-10.4：铃铛补发与自助送走 ----
+
+    /**
+     * 补发铃铛（{@code /catmaid bell [名字]}）。
+     *
+     * <p>绑定关系的修复思路（蓝图 P10-10.4）：DB 是绑定的事实来源，铃铛只是凭证，
+     * 凭证丢了可以再补——否则"女仆全灭 + 铃铛丢失"会让玩家既不能复活又腾不出名额，永久锁死。
+     * 补发收 {@code death.revive-cost} 同额材料，堵住"丢铃铛白嫖一次复活传送"的漏洞；
+     * {@code death.bell-expire-days} 打开时（默认关），倒下超过 N 天的免费补发。
+     *
+     * <p>不带名字时只在铃铛态女仆里解析：只有一只就默认她，多于一只必须指定——
+     * 普通命令的"就近"策略对倒下的女仆没有意义（她没有实体，谈不上远近）。
+     */
+    private void bell(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        String name = optionalArg(args, 1);
+        Maid maid;
+        if (name == null || name.isBlank()) {
+            List<Maid> fallen = maidManager.byOwner(player.getUniqueId()).stream()
+                    .filter(m -> !m.isAlive()).toList();
+            if (fallen.isEmpty()) {
+                Messages.send(player, "bell-none");
+                return;
+            }
+            if (fallen.size() > 1) {
+                Messages.send(player, "bell-specify",
+                        Map.of("count", String.valueOf(fallen.size())));
+                return;
+            }
+            maid = fallen.getFirst();
+        } else {
+            maid = resolveMaid(player, name);
+            if (maid == null) {
+                return;
+            }
+        }
+        if (maid.isAlive()) {
+            Messages.send(player, "bell-already-alive", Map.of("name", maid.getName()));
+            return;
+        }
+        Cost cost = reviveCost();
+        boolean free = bellExpired(maid);
+        if (!free) {
+            if (!player.getInventory().containsAtLeast(new ItemStack(cost.material()), cost.amount())) {
+                Messages.send(player, "revive-no-item", Map.of(
+                        "item", cost.material().name().toLowerCase(Locale.ROOT).replace('_', ' '),
+                        "amount", String.valueOf(cost.amount())));
+                return;
+            }
+        }
+        ItemStack bell = items.bell(maid);
+        player.getInventory().addItem(bell).values()
+                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        if (!free) {
+            player.getInventory().removeItem(new ItemStack(cost.material(), cost.amount()));
+            Messages.send(player, "bell-issued", Map.of(
+                    "name", maid.getName(),
+                    "item", cost.material().name().toLowerCase(Locale.ROOT).replace('_', ' '),
+                    "amount", String.valueOf(cost.amount())));
+        } else {
+            Messages.send(player, "bell-issued-free", Map.of(
+                    "name", maid.getName(),
+                    "days", String.valueOf(plugin.getConfig().getLong("death.bell-expire-days", 0))));
+        }
+        plugin.getLogger().info(player.getName() + " 补发了铃铛态女仆 " + maid.getName()
+                + (free ? "（过期免费）" : "（收费 " + cost.material() + " × " + cost.amount() + "）"));
+    }
+
+    /** 倒下超过 {@code death.bell-expire-days} 天（0 = 功能关）。 */
+    private boolean bellExpired(Maid maid) {
+        long days = plugin.getConfig().getLong("death.bell-expire-days", 0);
+        if (days <= 0 || maid.getDeathAt() <= 0) {
+            return false;
+        }
+        return System.currentTimeMillis() - maid.getDeathAt() >= days * 86_400_000L;
+    }
+
+    /**
+     * 主人自助送走（{@code /catmaid release [名字]}）：删 DB 记录 + 销毁 NPC，任何状态都能送。
+     *
+     * <p>送走是不可逆的（她的好感、背包、统计随记录一起消失），所以二次确认用
+     * "聊天栏再输入一次她的名字"（蓝图原文）——比再敲一遍命令更醒目，也不容易顺手点掉。
+     * 名字输入在 AsyncChatEvent 里比对，命中就吞掉聊天消息并在主线程执行删除；
+     * 输错或超时则静默过期，不打断玩家正常聊天。
+     */
+    private void release(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        Maid maid = resolveMaid(player, optionalArg(args, 1));
+        if (maid == null) {
+            return;
+        }
+        pendingRelease.put(player.getUniqueId(),
+                new PendingRelease(maid.getId(), maid.getName(),
+                        System.currentTimeMillis() + CONFIRM_TIMEOUT_MS));
+        Messages.send(player, "sendaway-confirm", Map.of("name", maid.getName()));
+        Messages.send(player, "sendaway-confirm-2", Map.of("name", maid.getName()));
+    }
+
+    /** /catmaid release 的聊天栏二次确认（详见 {@link #release}）。 */
+    @EventHandler
+    public void onAsyncChat(AsyncChatEvent event) {
+        PendingRelease pending = pendingRelease.get(event.getPlayer().getUniqueId());
+        if (pending == null) {
+            return;
+        }
+        if (System.currentTimeMillis() > pending.expiresAt()) {
+            pendingRelease.remove(event.getPlayer().getUniqueId());
+            return;
+        }
+        String typed = PlainTextComponentSerializer.plainText()
+                .serialize(event.message()).trim();
+        if (!typed.equalsIgnoreCase(pending.maidName())) {
+            return; // 输错了不打断正常聊天，等它自然过期
+        }
+        event.setCancelled(true);
+        pendingRelease.remove(event.getPlayer().getUniqueId());
+        UUID maidId = pending.maidId();
+        String name = pending.maidName();
+        // 聊天是异步事件，删 NPC/DB 必须回主线程
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (maidManager.byId(maidId).isEmpty()) {
+                return; // 等待期间她已经被送走/admin remove，无事可做
+            }
+            if (maidManager.remove(maidId)) {
+                Messages.send(event.getPlayer(), "sendaway-success", Map.of("name", name));
+            }
+        });
+    }
+
+    /** /catmaid release 的待确认记录。 */
+    private record PendingRelease(UUID maidId, String maidName, long expiresAt) {
+    }
+
+    /** config 的 {@code death.revive-cost} 解析（与 TalismanListener 同款；写错回落默认值）。 */
+    private record Cost(Material material, int amount) {
+    }
+
+    private Cost reviveCost() {
+        String raw = plugin.getConfig().getString("death.revive-cost", "DIAMOND:1");
+        String[] parts = raw.split(":", 2);
+        Material material = Material.matchMaterial(parts[0].trim());
+        if (material == null) {
+            plugin.getLogger().warning("death.revive-cost 的材质 " + parts[0] + " 无法识别，按 DIAMOND 处理");
+            material = Material.DIAMOND;
+        }
+        int amount = 1;
+        if (parts.length > 1) {
+            try {
+                amount = Math.max(1, Integer.parseInt(parts[1].trim()));
+            } catch (NumberFormatException e) {
+                plugin.getLogger().warning("death.revive-cost 的数量写法不是整数，按 1 处理：" + raw);
+            }
+        }
+        return new Cost(material, amount);
+    }
+
     private void summon(CommandSender sender, String[] args) {
         if (args.length < 3) {
             sendHelp(sender);
@@ -814,6 +999,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 subs.add("rename");
                 subs.add("title");
                 subs.add("talisman");
+                subs.add("soul");
+                subs.add("bell");
+                subs.add("release");
             }
             if (sender.hasPermission("catmaid.admin")) {
                 subs.add("admin");
@@ -835,7 +1023,9 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                     .map(Maid::getName).toList();
             if (!names.isEmpty()) {
                 if (args.length == 2 && (args[0].equalsIgnoreCase("gui")
-                        || args[0].equalsIgnoreCase("sethome"))) {
+                        || args[0].equalsIgnoreCase("sethome")
+                        || args[0].equalsIgnoreCase("bell")
+                        || args[0].equalsIgnoreCase("release"))) {
                     return filter(names, args[1]);
                 }
                 if (args.length == 3 && (args[0].equalsIgnoreCase("mode")

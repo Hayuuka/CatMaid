@@ -45,6 +45,8 @@ help:
   - "<gray>/catmaid title <称呼> [名字] <dark_gray>—</dark_gray> 改她对你的称呼"
   - "<gray>/catmaid talisman [数量] <dark_gray>—</dark_gray> 领几张空魂符（收纳/放出女仆）"
   - "<gray>/catmaid soul [数量] <dark_gray>—</dark_gray> 领几张未唤醒的魂符（召唤）"
+  - "<gray>/catmaid bell [名字] <dark_gray>—</dark_gray> 补发倒下女仆的铃铛（收复活材料，丢了不怕）"
+  - "<gray>/catmaid release [名字] <dark_gray>—</dark_gray> 送走女仆（不可逆！聊天栏再输一次名字确认）"
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
   - "<gray>/catmaid admin remove <玩家|女仆UUID>"
@@ -130,6 +132,17 @@ bell-received: "<light_purple>{name} 倒下了……铃铛已放进你的背包�
 bell-orphan: "<gray>这枚铃铛已经失去了主人，毫无反应。"
 bell-not-yours: "<gray>铃铛毫无反应……"
 bell-already-alive: "<gray>{name} 已经醒着了。"
+
+# ---- Phase 10 铃铛补发 / 自助送走 ----
+# /catmaid bell：DB 是绑定的事实来源，铃铛丢了可以再补（收 revive-cost 同额材料防白嫖传送）
+bell-none: "<gray>你名下没有倒下的女仆。"
+bell-specify: "<gray>你有 {count} 只倒下的女仆，用 /catmaid bell <名字> 指定要补发的那一位。"
+bell-issued: "<light_purple>已补发 {name} 的铃铛（消耗 {item} × {amount}）。拿在手里右键，就能把她叫醒。"
+bell-issued-free: "<light_purple>{name} 已经等了 {days} 天了……这次不收材料。铃铛已放进你的背包。"
+# /catmaid release：主人自助送走，二次确认 = 聊天栏再输入一次名字
+sendaway-confirm: "<red>要送走 {name} 吗？她的好感、背包和记忆都会一起消失，不可恢复！"
+sendaway-confirm-2: "<red>确认的话，请在 30 秒内于聊天栏再输入一次她的名字：<yellow>{name}"
+sendaway-success: "<yellow>{name} 被送走了。愿她在别处过得安好。"
 
 revive-no-item: "<red>要把她叫醒，需要 {item} × {amount}。"
 revive-npc-missing: "<red>{name} 的身体已经找不到了，请联系管理员。"

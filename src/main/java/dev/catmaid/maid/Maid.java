@@ -33,6 +33,8 @@ public final class Maid {
     private boolean sitting;
     /** 收纳态（P9）：她在这只魂符里，NPC 处于 despawn、没有实体，但仍占着主人名额。 */
     private boolean stored;
+    /** 最近一次倒下的时间戳（毫秒，0 = 未知/从未倒下）。P10 的铃铛过期补发按它判断"倒下超过 N 天"。 */
+    private long deathAt;
     private Location home;
     private int npcId = -1;
     /** 血量上限，来自 {@code combat.maid-max-health}（启动/召唤时由 MaidManager 灌入）。 */
@@ -128,6 +130,14 @@ public final class Maid {
 
     public void setStored(boolean stored) {
         this.stored = stored;
+    }
+
+    public long getDeathAt() {
+        return deathAt;
+    }
+
+    public void setDeathAt(long deathAt) {
+        this.deathAt = deathAt;
     }
 
     public Location getHome() {

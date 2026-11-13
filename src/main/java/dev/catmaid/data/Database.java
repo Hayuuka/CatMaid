@@ -60,10 +60,12 @@ public final class Database implements AutoCloseable {
                       home_world  TEXT, home_x REAL, home_y REAL, home_z REAL,
                       sitting     INTEGER NOT NULL DEFAULT 0,
                       stored      INTEGER NOT NULL DEFAULT 0,
+                      death_at    INTEGER NOT NULL DEFAULT 0,
                       created_at  INTEGER NOT NULL
                     )
                     """);
             migrateStoredColumn(st);
+            migrateDeathAtColumn(st);
             st.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS maid_items (
                       maid_id TEXT NOT NULL,
@@ -101,6 +103,21 @@ public final class Database implements AutoCloseable {
             }
         }
         st.executeUpdate("ALTER TABLE maids ADD COLUMN stored INTEGER NOT NULL DEFAULT 0");
+    }
+
+    /**
+     * P10 新增的 {@code death_at} 列（铃铛过期补发要用"倒下多久了"，没有时间戳就算不了）。
+     * 与 {@link #migrateStoredColumn} 同一套幂等写法：列已存在就什么都不做。
+     */
+    private void migrateDeathAtColumn(Statement st) throws SQLException {
+        try (ResultSet rs = st.executeQuery("PRAGMA table_info(maids)")) {
+            while (rs.next()) {
+                if ("death_at".equalsIgnoreCase(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        st.executeUpdate("ALTER TABLE maids ADD COLUMN death_at INTEGER NOT NULL DEFAULT 0");
     }
 
     @Override
