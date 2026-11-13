@@ -5,6 +5,23 @@ general:
   # 新女仆对主人的默认称呼（可用 /catmaid title 改；台词里的 {owner} 就是这个）
   default-title: 主人
 
+# ---- 命令权限（P10 增补）----
+# 把某条命令设为 true 后，只有管理员（catmaid.admin 权限）能用它，普通玩家会收到拒绝提示。
+# 每条命令分开控制；admin 子树本身已挂 catmaid.admin，不在这里重复。
+# 改完 /catmaid admin reload 即时生效；tab 补全会同步对普通人隐藏这些命令。
+commands:
+  admin-only:
+    gui: false
+    mode: false
+    sethome: false
+    info: false
+    rename: false
+    title: false
+    talisman: false
+    soul: false
+    bell: false
+    release: false
+
 # 女仆模型池：召唤时若未指定模型，从这里随机取一个
 # 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致
 #

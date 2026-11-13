@@ -112,7 +112,14 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
             sendHelp(sender);
             return true;
         }
-        switch (args[0].toLowerCase(Locale.ROOT)) {
+        String sub = args[0].toLowerCase(Locale.ROOT);
+        // P10 增补：commands.admin-only.<命令> 为 true 时该命令只认 catmaid.admin
+        //（config 每次现场读，admin reload 即时生效）。admin 子树本身已挂 catmaid.admin，不进这张表
+        if (adminOnly(sub) && !sender.hasPermission("catmaid.admin")) {
+            Messages.send(sender, "admin-only-command");
+            return true;
+        }
+        switch (sub) {
             case "gui" -> gui(sender, args);
             case "mode" -> mode(sender, args);
             case "sethome" -> sethome(sender, args);
@@ -127,6 +134,11 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
             default -> sendHelp(sender);
         }
         return true;
+    }
+
+    /** 该命令是否被 config 标成管理员专用（未配置的命令一律 false）。 */
+    private boolean adminOnly(String sub) {
+        return plugin.getConfig().getBoolean("commands.admin-only." + sub, false);
     }
 
     /**
@@ -989,21 +1001,19 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
     public List<String> onTabComplete(@NotNull CommandSender sender, @NotNull Command command,
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length == 1) {
-            // 普通玩家只有玩家侧命令，不要因为没 admin 权限就把补全整个清空
+            // 普通玩家只有玩家侧命令，不要因为没 admin 权限就把补全整个清空；
+            // 被 commands.admin-only 标成管理员专用的命令对普通人不进补全（P10 增补）
+            boolean admin = sender.hasPermission("catmaid.admin");
             List<String> subs = new ArrayList<>();
             if (sender.hasPermission("catmaid.use")) {
-                subs.add("gui");
-                subs.add("mode");
-                subs.add("sethome");
-                subs.add("info");
-                subs.add("rename");
-                subs.add("title");
-                subs.add("talisman");
-                subs.add("soul");
-                subs.add("bell");
-                subs.add("release");
+                for (String sub : List.of("gui", "mode", "sethome", "info", "rename", "title",
+                        "talisman", "soul", "bell", "release")) {
+                    if (!adminOnly(sub) || admin) {
+                        subs.add(sub);
+                    }
+                }
             }
-            if (sender.hasPermission("catmaid.admin")) {
+            if (admin) {
                 subs.add("admin");
             }
             return filter(subs, args[0]);

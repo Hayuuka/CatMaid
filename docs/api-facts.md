@@ -2550,6 +2550,7 @@ RCON 实测命令注册与别名移除；其余验收项（客户端观感、10.
 | 299fbe6 | `docs/api-facts.md`、testserver | 资源包走原版单包裁决：CE 从 `testserver/plugins/` 移至 `plugins-disabled/`；4.0 记录部署事实 |
 | 1421a9c | `CatMaidCommand`、`CatMaidPlugin`、`Database`、`MaidRepository`、`Maid`、`MaidDamageListener`、`config.yml`、`messages.yml` | `/catmaid bell [名字]`（收 revive-cost 同额材料；`death.bell-expire-days` 过期免费）、`/catmaid release [名字]`（聊天栏 30s 内再输一次名字二次确认）；`death_at` 列幂等迁移 |
 | 795ffc5 | `build.gradle.kts`、`Database.java` | **去掉 sqlite-jdbc relocate**（见 26.3），驱动类回到 `org.sqlite.JDBC` |
+| （26.1 后增补） | `CatMaidCommand`、`config.yml`、`messages.yml` | **命令级管理员开关**（服主 2026-11-13 13:04 需求）：`commands.admin-only.<命令>` 每条玩家侧命令单独设 true/false，true 时只认 `catmaid.admin`，普通玩家收到 `admin-only-command` 拒绝提示；tab 补全同步隐藏；config 现场读、`admin reload` 即时生效。admin 子树本身已挂 catmaid.admin，不进这张表 |
 
 ### 26.3 [CONFLICT] 重大冲突：sqlite-jdbc 的 shade relocate 会破坏原生库绑定
 
@@ -2595,6 +2596,11 @@ RCON 实测命令注册与别名移除；其余验收项（客户端观感、10.
       进服只弹一次资源包下载、全灭丢铃铛补发闭环、release 聊天确认流、P8 挂起项（10.5）
 
 ### 26.6 部署注意
+
+0. **`config.yml` 的 `commands.admin-only` 段不会自动长进旧文件**（25.7-3 同款）：升级时手动把该段
+   拷进生产服 config（缺段 = 全部 false = 行为与旧版一致，不拷也能跑）。测试服已手动补齐。
+   实测：控制台（有 catmaid.admin）能过闸门并落到"该命令只能由玩家执行"；普通玩家被拒的画面
+   需要真人客户端（admin reload 后把一条设 true 再敲即可验）。
 
 1. **生产服升级到 P10 前先删一次 `plugins/CatMaid/messages.yml`**（23.3-2）：否则帮助文案停留在
    旧命令表，且 10.4 的 bell/release 提示键不会生效（新键会补、`help` 列表键不会更新）。

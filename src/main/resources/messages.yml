@@ -2,6 +2,8 @@
 prefix: "<light_purple>[CatMaid]</light_purple> "
 
 no-permission: "<red>你没有权限这样做。"
+# commands.admin-only 打开的命令对普通人（P10 增补）
+admin-only-command: "<red>这条命令只有管理员才能使用。"
 player-only: "<red>该命令只能由玩家执行。"
 player-not-found: "<red>找不到玩家：{player}"
 depend-missing: "<red>缺少必需依赖 {name}，猫娘女仆已停止工作。"

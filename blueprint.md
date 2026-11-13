@@ -1233,6 +1233,15 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
   插件自禁用（此前能跑是别的插件的 org.sqlite 类"顶包"的巧合）。已去掉 relocate
   （`795ffc5`），agent.md 2.1 的 relocate 要求按冲突协议作废，详见 api-facts 26.3。
 
+### 10.4 附带需求：命令级管理员开关（服主 2026-11-13 增补）
+
+- **需求**：每条 `/catmaid` 命令可以单独设成"仅管理员可用"，进 config。
+- **实现**：`config.yml` 新增 `commands.admin-only.<命令>`（十条玩家侧命令逐条布尔，默认 false
+  保持现状）；true 时 `onCommand` 入口直接拒绝非 `catmaid.admin` 的发送者，tab 补全同步隐藏；
+  admin 子树本身已挂权限不重复配置。config 现场读取，`/catmaid admin reload` 即时生效。
+- **验收**：构建通过、启动 0 ERROR、控制台（管理员）过闸门；普通玩家被拒画面待客户端
+  （把任一条设 true + reload 后敲命令即验）。
+
 ---
 
 ## 附录 A — 风险与降级预案
