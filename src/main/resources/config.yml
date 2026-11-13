@@ -6,20 +6,38 @@ general:
   default-title: 主人
 
 # ---- 命令权限（P10 增补）----
-# 把某条命令设为 true 后，只有管理员（catmaid.admin 权限）能用它，普通玩家会收到拒绝提示。
-# 每条命令分开控制；admin 子树本身已挂 catmaid.admin，不在这里重复。
-# 改完 /catmaid admin reload 即时生效；tab 补全会同步对普通人隐藏这些命令。
+# 每条 /catmaid 玩家侧命令一个开关：
+#   false = 维持默认（所有有 catmaid.use 权限的玩家都能用，catmaid.use 默认 true）
+#   true  = 只有管理员（catmaid.admin 权限，默认 op）能用，普通玩家会收到拒绝提示
+#
+# 说明：
+# - 每条命令分开控制，互不影响；
+# - 改完 /catmaid admin reload 即时生效，不用重启服务器；
+# - 被 true 掉的命令，普通玩家按 tab 补全时也不会出现；
+# - admin 子树（admin summon/remove/list/setaffection/reload）本身已挂 catmaid.admin，
+#   不在这里重复配置；这里的键名要与命令名一字不差（写错不会报错，只是不生效）。
+# - 这一段在旧 config.yml 里不存在时不自动生成（升级要手动拷），缺段 = 全部 false。
 commands:
   admin-only:
+    # /catmaid gui [名字] —— 打开女仆主菜单
     gui: false
+    # /catmaid mode <模式> [名字] —— 切换工作模式（闲置/跟随/战斗/农业/畜牧）
     mode: false
+    # /catmaid sethome [名字] —— 把脚下设为她的家
     sethome: false
+    # /catmaid info —— 查看自己女仆的状态列表
     info: false
+    # /catmaid rename <名字> [原名字] —— 给女仆改名（好感门槛）
     rename: false
+    # /catmaid title <称呼> [名字] —— 改她对你的称呼
     title: false
+    # /catmaid talisman [数量] —— 领空魂符（收纳/放出用，带冷却）
     talisman: false
+    # /catmaid soul [数量] —— 领未唤醒的魂符（召唤新女仆用，带冷却）
     soul: false
+    # /catmaid bell [名字] —— 补发倒下女仆的铃铛（收复活材料）
     bell: false
+    # /catmaid release [名字] —— 送走女仆（不可逆，二次确认）
     release: false
 
 # 女仆模型池：召唤时若未指定模型，从这里随机取一个
