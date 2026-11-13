@@ -213,10 +213,10 @@ dependency:
     talisman-id: catmaid:talisman
 ```
 
-- `vanilla`（当前采用）：凭证物品（铃铛/魂符）用原版材质，资源包只有原版槽位一个下发源。
-- `craftengine`：凭证物品改用 CE 自定义物品 ID。CE 侧没定义这些 ID 时自动回落原版材质并打告警。
+- `vanilla`（当前采用）：凭证物品（铃铛/魂符）用原版材质，BM 包独占原版 `server.properties` 资源包槽位（单次下载）。
+- `craftengine`：凭证物品改用 CE 自定义物品 ID，BM 包并入 CE 包由 CE send_pack 统一下发（server.properties 资源包键清空）。CE 侧没定义这些 ID 时自动回落原版材质并打告警。**下发链路已修复并实测通过**（api-facts 4.3，2026-11-13：进服单次下载、模型渲染正常）。启用前需在 CE 侧先定义 `catmaid:bell` / `catmaid:talisman` 物品，改 `provider` 后 `/catmaid admin reload` 生效。运维要点：重启或改 CE 配置后若不弹包，先跑 `/ce reload pack`——self-host 内存无托管包时会静默跳过、无任何日志。
 - 两种模式的物品互相认（身份认 CatMaid 自己的 PDC），切换后旧物品不作废。
-- 资源包分发的部署裁决见 api-facts 第 4.0 节（P10 起只走原版单包）。
+- 部署口径见 api-facts 4.0b（2026-11-13 二次裁决：物品与分发跟 provider 整体对齐，禁止混搭）。
 
 ---
 

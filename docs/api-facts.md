@@ -237,7 +237,7 @@ BetterModel 还给 Citizens 注册了调试命令（需选中 NPC，**玩家可�
 
 ---
 
-## 4. 资源包方案（Phase 0 定案：**双包分离**；P10-10.3 修订：**只走原版单包**）
+## 4. 资源包方案（Phase 0 定案：双包分离；P10-10.3 修订：只走原版单包；4.0b 二次修订：分发跟 provider 对齐）
 
 ### 4.0 P10 修订：资源包分发走原版，CE 移除（2026-11-13，服主裁决）
 
@@ -255,6 +255,21 @@ P10-10.3 按蓝图给出两条路线，**服主裁决走原版（provider=vanill
 
 测试服现状核对（2026-11-13）：`packhost/catmaid-pack.zip` sha1 = `6f0f8d7183203b881d44798f5088e3358aee5b62`
 与 `server.properties` 一致；单次下载待客户端进服复核（蓝图 10.3 验收项）。
+
+### 4.0b 二次修订：物品与分发跟 provider 整体对齐（2026-11-13 服主二次裁决，覆盖 4.0 的路线取舍）
+
+服主于同日二次裁决：**撤销 4.0 的"CE 合并路线不再采用"**，改为 `dependency.provider` 同时决定
+凭证物品与资源包分发，两条路线各自自洽、禁止混搭：
+
+- vanilla（**现状，已部署**）：原版凭证物品 + BM 包独占原版槽位；
+- craftengine：CE 凭证物品（`catmaid:bell` / `catmaid:talisman`）+ BM 包并入 CE
+  `merge-external-zip-files`、由 CE send_pack 统一下发；server.properties 的资源包三键清空；
+  启用前置（send_pack 修复）**已于 2026-11-13 完成并实测通过（见 4.3）**。剩余前置：
+  CE 侧需先定义 `catmaid:bell` / `catmaid:talisman` 物品（测试服 CE 仍无定义，插件会回落
+  原版材质并告警），且 provider=craftengine 全链路（召唤/喂食/死亡/复活/收纳）未实测（24.3-6）。
+
+4.0 的部署事实（CE 移至 `plugins-disabled/`、BM 包独占原版槽位）仍有效，作为 vanilla 现状保留；
+本节只改"路线取舍"口径。
 
 ### 4.1 定案（已实机通过）
 
@@ -279,11 +294,33 @@ P10-10.3 按蓝图给出两条路线，**服主裁决走原版（provider=vanill
 - CE 侧的包由工作流自动 upload + send，不需要手工换名。
 - 部署顺序：**先 `/bm reload`（重建模型包）→ 再 `/ce reload pack`（重建 CE 包）**。
 
-### 4.3 注意：CE 单独下发在本次测试中未生效（未定位到根因）
+### 4.3 CE send_pack 未生效——根因已定位并修复（2026-11-13，覆盖 11-10 原记录）
 
-改用分离方案**之前**（CE 合并 BM 单包 + `require-resource-pack=true`）时，客户端完全看不到模型，且服务端日志里**没有任何资源包下发记录**，`plugins/CraftEngine/data.db` 里也没有玩家包记录 —— 即 CE 的 `send_pack` 在玩家进服时疑似没有真正执行。改用原版 `resource-pack` 强制下发后立刻可见。
+**原故障**（2026-11-10 19:50 会话）：CE 合并 BM 单包测试时，客户端不弹包、服务端无下发日志、`data.db` 无玩家包记录。
 
-本次未继续深挖 CE 的下发链路（分离方案已满足需求）。**若后续要回到"CE 单包合并"路线，必须先解决这个下发问题**，验证方法：进服时看客户端是否弹包、服务端是否有 `正在上传/发送` 记录、`data.db` 是否记录玩家包状态。
+**根因**（反编译 CE 26.9.2 + 日志对照得出）：CE join 下发（1.20.2+ 客户端走 configuration 阶段，拦截 vanilla FinishConfigurationPacket 后发包）在 `SelfHostHttpServer.generateOneTimeUrl` 返回 null 时**静默跳过**。该方法有三条全部无日志的失败路径：
+1. self-host 未启用（`enabled=false`）；
+2. **内存 `packs` 表中无该 pack id 的托管包**（本次故障命中项）；
+3. 玩家 UUID 为空。
+
+任何一条命中都是三症状齐合：无下发日志、无 data.db 记录、客户端无下载请求。11-10 故障会话重启后工作流从未跑过（console.log 无"生成/上传资源包"行），配置处于实验态，self-host 内存中无可用托管包 → 静默跳过。
+
+**排除项（均有实测证据，勿再怀疑）**：
+- 原版 `server.properties` 三键**与 CE 下发不冲突**：11-10 19:37/19:43 两次进服在原版键设着的情况下 CE 均成功下发（客户端下载缓存 log.json 为证）；
+- 离线模式无影响；
+- `port: "auto"` 时 CE 不开独立端口，HTTP 挂靠 MC 主端口（25566）——netstat 看不到额外端口是**正常设计**；
+- 2026-11-13 16:59 会话的"弹包成功"是**误判**：该会话插件列表里根本没有 CraftEngine，弹的是原版包。
+
+**修复动作**（2026-11-13）：CE 移回 `plugins/`；`merge-external-zip-files` 恢复 `BetterModel/build.zip`；`server.properties` 三键清空（4.0b craftengine 路线）；`/ce reload pack` 重建托管包（250KB→9.15MB，含 18167 条 bettermodel 条目）。
+
+**验收结果**（全部通过，2026-11-13 18:08–18:51 实测）：
+1. ✅ 进服自动收到包：客户端下载缓存三次 join（18:08:52 / 18:48:40 / 18:50:44）均下载 9150489 字节 = 托管包精确大小；玩家确认收到包、CE 物品正常；
+2. ✅ 服务端日志：工作流"生成→验证→压缩→上传成功"（join 时下发按 CE 设计不打日志；一次性 token 使每次 join 必下新包，以客户端下载记录为准）；`data.db`：`/pack disable`+`/pack enable` 后 `ce_pack_preferences` 落库——普通 accept 不写库是 CE 设计，仅显式 `/pack` 偏好落库；
+3. ✅ 模型 NPC 正常渲染无紫黑（玩家实机确认；玩家移走旧 BT 包后模型仍正常 → CE 单包内容齐全）；
+4. ✅ 单包：每次 join 仅 1 个下载记录；客户端列表残留的"bt"条目为历史下载缓存，可手动删除；
+5. ✅ reload→重进拿新包：18:50 reload 后 18:50:44 重进即下载新上传包。
+
+**运维要点**：重启或改配置后若"不弹包"，先跑 `/ce reload pack` 确保 self-host 内存中有托管包——静默跳过不会给任何日志提示。
 
 ### 4.4 模型贴图来源（重要，影响女仆模型选型）
 
@@ -359,6 +396,7 @@ P10-10.3 按蓝图给出两条路线，**服主裁决走原版（provider=vanill
 | 2026-11-10 | **资源包方案改为双包分离**（用户决定）：CE 不再合并 `BetterModel/build.zip`，女仆包改由原版 `server.properties` 强制下发（静态 HTTP + sha1）。客户端实机确认双包并存、`demon_knight` 正常渲染；新增 4.2 资源包更新姿势、4.3 CE 下发未生效的遗留观察、4.4 模型贴图来源与 `fallback_skin.png` 彩虹配色事实。 |
 | 2026-11-10 | **Phase 0 收尾**：新增 3.5「玩家型 NPC 不会自动播放行走动画」——BM 对 `ServerPlayer` 的 `isWalking` 只看 `xMovement/zMovement`（移动输入），Citizens 玩家型 NPC 恒 false；客户端已确认 `/npc animate 2 walk` 可正常播放动画。验收清单四项中三项通过、行走动画一项定性为"需代码驱动（Phase 3）"。CE 自定义物品可见确认通过。 |
 | 2026-11-11 | **Phase 3 收口**：新增第 17 节。核心事实 17.2——玩家型 NPC 的 `Trait#run()` 永远不会被调用（Citizens 只对带 `PacketNPC` 的 NPC 调 `AbstractNPC#update()`），行为 tick 改由插件调度器驱动，蓝图 P3 的委托点作废（含 `[CONFLICT]` 记录）；17.5 新增 `Tracker.animate/stopAnimation` + `AnimationModifier(LOOP)` 的反射用法与「为什么不用 `animate(String)`」；17.6 记录"无玩家在线时 NPC 会被置为 spawned=false"这个把排查带偏的坑。 |
+| 2026-11-13 | **4.3 send_pack 故障收口**：根因定位（self-host 内存 `packs` 表无托管包时 join 下发静默跳过，反编译 CE 26.9.2 确认，三条无日志失败路径）→ 修复（CE 移回 `plugins/`、恢复 `merge-external-zip-files`、清空 server.properties 三键、`/ce reload pack` 重建托管包 250KB→9.15MB）→ 实机验收 5 项全过（单次下载、渲染无紫黑、reload 即拿新包）。**craftengine 路线启用前置解除**；排障任务书存档 `docs/send-pack-debug-prompt.md`、DB 侧写脚本 `tools/check_db.py`。 |
 
 ---
 

@@ -13,8 +13,8 @@
 | 插件名 | CatMaid（中文：猫娘女仆） |
 | 服务器 | Paper **26.2**，Java **25** |
 | 实现方式 | **纯插件**。禁止 mod、禁止要求玩家客户端安装任何东西 |
-| 玩家侧 | 强制资源包，链路二选一：原版 `resource-pack` 或 CraftEngine 分发（`dependency.provider`，P9 引入；P10 修复"进服两次下载"） |
-| 依赖插件 | Citizens2（硬依赖）、BetterModel（硬依赖，模型渲染）、CraftEngine（**可选 API 依赖**：`provider=craftengine` 时提供凭证物品与单包分发；vanilla 模式零耦合。P9 引入，agent.md 1.4 口径以本蓝图为准） |
+| 玩家侧 | 强制资源包 + 凭证物品**按 `dependency.provider` 整体二选一（10.3 二次裁决，2026-11-13）**：vanilla → 原版物品 + BM 包独占原版 `resource-pack` 槽位；craftengine → CE 凭证物品 + BM 包并入 CE 包由 CE 统一下发（前置：api-facts 4.3 的 send_pack 已修复并实测通过，2026-11-13） |
+| 依赖插件 | Citizens2（硬依赖）、BetterModel（硬依赖，模型渲染）、CraftEngine（**可选 API 依赖**：`provider=craftengine` 时提供凭证物品与资源包统一分发；vanilla 模式零耦合。P9 引入，agent.md 1.4 口径以本蓝图为准） |
 | 服务器性质 | 非商用免费服 |
 | 体验核心 | **"养了一只属于自己的猫娘女仆"**——主人绑定、好感度养成、台词互动。所有设计决策优先服务这一点 |
 
@@ -38,9 +38,10 @@ CatMaid 插件（自研）
 
 外部依赖（只调用，不修改其内部）：
  Citizens2   → 玩家型NPC、Navigator 寻路、NPCRightClickEvent
- BetterModel → ModelTrait 挂 bbmodel 模型 + 动画（双包分离：模型包走原版 resource-pack 强制下发；
+ BetterModel → ModelTrait 挂 bbmodel 模型 + 动画（模型包下发源跟 provider 走：vanilla 走原版
+             resource-pack 槽位、craftengine 并入 CE 包统一下发——见 10.3；
              动画由服务端逐帧驱动、不进资源包——改 bbmodel/调动画只需重启，不必重发包，见附录 A）
- CraftEngine → 可选（P9 provider）：craftengine 模式提供凭证物品构造与单包分发；vanilla 模式零耦合
+ CraftEngine → 可选（P9 provider）：craftengine 模式提供凭证物品构造与资源包统一分发；vanilla 模式零耦合
 ```
 
 ### 0.4 项目构建配置（照抄即可）
@@ -1142,8 +1143,14 @@ dependency:
 
 > **状态：代码与部署动作完成（2026-11-13）**。10.1（cabc44b）/ 10.2（5039601）/ 10.3（299fbe6，
 > 服主裁决资源包走原版单包）/ 10.4（1421a9c）四个提交落地；测试服启动验证通过（见 api-facts 26）。
+> **10.3 二次修订（2026-11-13，服主）**：撤销同日早些的"只走原版单包"裁决，改为
+> **物品与分发跟 provider 整体对齐**——vanilla = 原版物品 + 原版槽位；craftengine = CE 物品 +
+> BM 并入 CE 包由 CE 统一下发。**三次更新（同日）**：4.3 的 send_pack 故障已定位根因并修复、
+> 实机验收 5 项全过（api-facts 4.3）——craftengine 路线启用前置解除；CE 已装回 plugins/、
+> 恢复合并配置、server.properties 三键清空。剩余前置：CE 侧定义 catmaid:bell / catmaid:talisman
+> 物品 + provider=craftengine 全链路实测（api-facts 24.3-6）。
 > **待实测**：10.5 全部（新玩家全链路 / 60 只 TPS / 玩家侧命令 happy path）、10.2-10.4 的
-> 客户端观感项、10.3 的"进服只弹一次下载"——都需要真人客户端，收口时逐项跑掉。
+> 客户端观感项、10.3 的"两种 provider 各只弹一次下载"——都需要真人客户端，收口时逐项跑掉。
 
 **目标**：命令前缀统一、多女仆定向操作、进服单次资源包下载、铃铛丢失不锁死（绑定关系修复）。
 
@@ -1169,22 +1176,31 @@ dependency:
   rename 撞自己名下另一只的名字直接拒绝；info 尾部提示选名；tab 补全自己名下女仆名；
   名字查找不限状态，bell/release 也要对铃铛态/收纳态操作）。
 
-### 10.3 双资源包下载修复
+### 10.3 双资源包下载修复（2026-11-13 二次修订：物品与分发跟 provider 整体对齐）
 - 根因 [已定位]：P0 定案的双包分离 = 原版 `resource-pack` 发 BM 包 + CE 再发自己的包 → 玩家
   进服**两次下载**。
-- 修法（跟着 P9 的 provider 走，属部署动作 + 配置清空）：
+- **终局口径（服主 2026-11-13 二次裁决，撤销同日早些的"只走原版"裁决）**：
+  `dependency.provider` 同时决定**凭证物品**与**资源包分发**，两链路各自自洽、禁止混搭：
 ```
-provider=craftengine：BM 包并回 CE 包（恢复 P0 步骤 4 方案 A 的 merge-external-zip-files），
-                      server.properties 的 resource-pack / sha1 / require-resource-pack 清空 → 单次下载
-                      [待验证：合并后模型渲染与 CE 物品正常——P0 当时最终选了双包，方案 A 无通过记录]
-provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体移除——若服务器另有 CE 内容，
-                  CE 仍会发自己的包、两次下载依旧（部署文档写明取舍）
+provider=vanilla：凭证物品用原版材质（BELL / AMETHYST_SHARD + PDC）；BM 包独占原版
+                  server.properties 槽位（resource-pack + sha1 + require-resource-pack=true）。
+                  CE 若仅为 CatMaid 而装可整体移除 → 单次下载。【现状，已部署】
+provider=craftengine：凭证物品用 CE 自定义物品（catmaid:bell / catmaid:talisman）；BM 包
+                  并回 CE 包（P0 步骤 4 方案 A 的 merge-external-zip-files），server.properties
+                  的 resource-pack / sha1 / require-resource-pack 清空，由 CE send_pack
+                  统一下发 → 单次下载。【前置已解除，见下】
 ```
-- 降级：CE 合并验证不过 → 退回双包分离（代价：维持两次下载），并在附录 A 记录结论。
-- 验收：两种 provider 下客户端进服只弹一次下载；模型与 CE 物品（若启用）渲染正常。
-  **[裁决已落地]**（2026-11-13 服主决定走原版：BM 包继续独占原版槽位，测试服 CE 已整体移除
-  至 `testserver/plugins-disabled/`；api-facts 4.0 记录了不采用 CE 合并路线的理由——
-  4.3 的 `send_pack` 未生效问题让合并路线天然存疑。"只弹一次下载"待客户端进服复核。）
+- **craftengine 路线的前置条件 [已解除]**：api-facts 4.3 的 CE `send_pack` 故障已定位根因
+  （self-host 内存中无托管包时 join 下发静默跳过、无任何日志）并修复，2026-11-13 实机验收
+  5 项全部通过（进服单次下载、模型渲染无紫黑、reload 即拿新包）。启用前还需：CE 侧定义
+  `catmaid:bell` / `catmaid:talisman` 物品（CE 缺定义时插件自动回落原版材质并告警）+
+  provider=craftengine 全链路实测（api-facts 24.3-6）。运维要点：重启或改 CE 配置后若不弹包，
+  先跑 `/ce reload pack`。
+- 验收：两种 provider 下进服均只弹一次下载；craftengine 下 BM 模型与 CE 物品同时正常渲染。
+- 部署状态：vanilla 路线已落地（299fbe6）且仍是当前 `provider`；craftengine 路线的
+  下发侧已备好（CE 装回 plugins/、`merge-external-zip-files` 含 BetterModel/build.zip、
+  server.properties 三键清空，见 api-facts 4.3 修复动作），只差 CE 物品定义 + provider 切换。
+  禁止混搭态的口径不变。
 
 ### 10.4 铃铛丢失 / 女仆绑定关系修复（参考车万女仆）
 - 问题 [已定位]：女仆全灭 + 铃铛丢失（火烧已防，但玩家可能扔掉/存丢）→ maid 永远 `alive=0`、
@@ -1219,8 +1235,9 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
 - [ ] 双女仆：按名字定向 gui / mode / sethome / rename；info 列表可作选择参考；rename 撞名被拒
       （代码完成于 5039601，待客户端实测）
 - [ ] 两种 provider 下进服均只下载一次资源包
-      （裁决走 vanilla 单包：CE 已从测试服移除（备份在 `testserver/plugins-disabled/`），
-      待客户端进服复核；CE 合并路线不再采用，见 api-facts 4.0/4.3）
+      （vanilla：已部署，BM 包独占原版槽位，待客户端进服复核；
+      craftengine：send_pack 已修复实测通过（api-facts 4.3），下发侧已备好（CE 合并单包、
+      原版三键清空），启用 provider=craftengine 后再验）
 - [ ] 全灭 + 丢铃铛场景：补发 → 复活；release → 名额释放
       （代码完成于 1421a9c，待客户端实测）
 - [ ] P8 挂起项（全链路 / 60 只 TPS / 玩家侧命令 happy path）回归通过
@@ -1252,7 +1269,7 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
 | 玩家型 NPC 移动时模型只平移、四肢不动（无行走动画） | **事实**[已实测]：根因同 Phase 0 定位（BM 对 `ServerPlayer` 的 `isWalking` 只看移动输入，Citizens 玩家型 NPC 无输入故恒 false），但代码驱动还有三条隐藏前提：①模型必须真有关键帧——`Tracker.animate(name)` 找不到动画**不抛异常、只返回 false**（首批 `foxmaid.bbmodel` 的 `animations` 为空即踩坑；P0 用 `demon_knight` 验证有动画，掩盖了这点）；②单次 `animate` 播完停在最后一帧不自续（表现为"跟几秒有动作，之后变平移"）；③`stopAnimation("sit")` 停得掉动画、停不掉骨骼姿势（tracker 不回 bind pose → "点起立还坐着"）。**采用方案**（已落码 `maid/ModelAnimator` 三姿态状态机 STAND/WALK/SIT）：STAND=`stop(walk)+stop(sit)+animate("idle")` 用归位动画顶掉坐姿；WALK=`stop(sit)+animate("walk")` 每 1050ms 续播（walk 周期 1s、首尾同帧，几乎无缝）；SIT=`stop(walk)+animate("sit")` 每 5000ms 补播。姿态由 `BehaviorManager` 每 tick 按「导航中/坐着」推导，各 Mode 不碰动画。**对后续影响**：P4 受击/死亡、P7 挥剑等动画同理需要「模型有该动画 + 续播 + 归位」三件套 [待验证：各动画周期与归位策略实现时逐一确定]（`Tracker`/`AnimationModifier` API 见 api-facts 17.5） |
 | 玩家型 NPC 的 `Trait#run()` 不会被调用 | Phase 3 已实测确认：Citizens 的 `PlayerUpdateTask` 只对带 `PacketNPC` trait 的 NPC 调 `AbstractNPC#update()`，而 `Trait.run()` 与 `navigator.run()` 都在 `update()` 里；真实玩家实体的 NPC 走原版 `playerTicker`。**行为 tick 改由插件调度器驱动**，`MaidTrait` 退化为数据标记（`docs/api-facts.md` 17.2） |
 | P4–P8 按「trait 每 tick 驱动」的直觉写周期逻辑 | **事实**[已实测]：见上一行——玩家型 NPC 的 `Trait#run()`/`navigator.run()` 永不被调用。**采用方案**：动画、导航、好感计时（P4 的 `FOLLOW_TICK` 等）等一切周期逻辑一律由插件调度器（`BehaviorManager.tickAll`，`CatMaidPlugin` 的 `runTaskTimer(…, 1L, 1L)`）统一推行；Mode/Listener 内的定时需求走 BehaviorManager 的 tick 计数，不挂 trait。**对后续影响**：任何"靠 trait 每 tick 驱动"的设计写法全部作废 |
-| 资源包合并后玩家看到棋盘格 | **Phase 0 已定案：双包分离**——女仆模型包（`BetterModel/build.zip`）走原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true` 强制下发；CraftEngine 只发自己的包（`merge-external-zip-files` 中移除 BetterModel）。客户端实测双包并存、模型正常渲染。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
+| 资源包合并后玩家看到棋盘格 | **分发跟 provider 走（10.3 二次裁决）**：vanilla → BM 包（`BetterModel/build.zip`）独占原版 `server.properties` 的 `resource-pack` + `sha1` + `require-resource-pack=true`，CE 不装或移除；craftengine → BM 包并入 CE `merge-external-zip-files`、CE send_pack 统一下发（**前置：修复 api-facts 4.3 send_pack 未生效**，修复前禁用该路线）。vanilla 双包并存形态已客户端实测渲染正常。细节与更新姿势见 `docs/api-facts.md` 第 4 节 |
 | `Animals#setLoveMode` 等 Paper API 在 26.2 变动 | Phase 0 逐一从 paper-api jar 确认；缺失则用反射调用 NMS 之外的最后手段：`entity.setMetadata` 不可行时退化为"不自动繁殖，仅剪毛/挤奶/捡拾" |
 | 蓝图 P6「`animals.setLoveMode(600)`」→ 备选「`Breedable#setBreed(true)`」 | **事实**[P6 实测 + 字节码复核]：`Animals#setLoveMode` 在 26.2 不存在；`Breedable#setBreed(boolean)` 的实现是 `setAge(0)` / `setAge(6000)`，改的是**年龄**，`setBreed(false)` 会把成年动物变成幼崽；`canBreed()` 也只看 `getAge()==0`。**采用方案**（P6 已落码 `RanchMode#feed`）：`Animals#setLoveModeTicks(600)` 才是真求偶入口，筛选/校验再加 `!isLoveMode()` 防止重复喂（api-facts 20.3、20.6） |
 | 蓝图 P7 `entity.attack(target)` 默认满伤害 | **事实**[JAR 已核]：`LivingEntity#attack(Entity)` 存在，但女仆是玩家型 NPC，走 `ServerPlayer.attack`，伤害受**攻击冷却**（attack strength）影响；`Player` 只有 `getCooledAttackStrength(float)`/`getCooldownPeriod()`/`resetCooldown()`，**没有灌满强度的 setter**。**采用方案**（**P7 已落码** `CombatMode#engage`）：攻击前判 `getCooledAttackStrength(0.5f) >= 0.9f`，否则等下一轮；`attack-interval-ticks: 20` 对剑够、对斧（0.8–1.0 攻速）略欠（要满伤调到 25）。**实测**：同一把钻石剑下好感 0 = 6.888/刀、好感 65 = 7.9212/刀（精确 ×1.15）——闸门把攻强抖动压到可忽略，加成差异才测得出来（api-facts 21.3-1） |
@@ -1273,7 +1290,7 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
 | 升级后 `/catmaid` 帮助还是旧命令表 | **事实**[已实测]：`Messages.mergeMissingKeys` 只补"文件里没有的键"，`help` 这种已存在的列表键不会被更新。**采用方案**：升级到 P8 时删一次 `plugins/CatMaid/messages.yml` 让插件按 jar 模板重建，或手动替换 `help:` 段（api-facts 23.3-2） |
 | BetterModel 不暴露骨骼位置 API（P9 手部物品显示的前提之一） | **事实**[已实测，P9]：① `RightHandLocator` 能取到，但 `RenderedBone#getDisplay()==null`——纯定位骨，`itemStack(...)` 静默成功、屏幕上没有；② `RightHand` 有 display，但那是手部几何体，用物品替换等于把手换成剑且还原不回来；③ `worldPosition()` 返回模型局部坐标（四根手臂骨都是 `(0,-0.01875,0)`），做不了外部挂点。**采用方案**（P9 已落码 `maid/HandItemDisplays`）：实际走降级——独立 `ItemDisplay` + 按实体朝向几何偏移（右偏 0.32 / 前偏 0.22 / 高 1.20，可配），每 2 tick 错峰跟随。骨骼链路保留为 `hand-item.mode: bone`，等模型补「手持物品骨」再启用（api-facts 24.3-1/2） |
 | CraftEngine 物品构造/识别 API 与预期不符（P9 provider=craftengine 的前提） | **事实**[JAR 已核，CE 26.9.2]：`CraftEngineItems.byId(String)` → `BukkitItemDefinition#buildBukkitItem()`；识别 `getCustomItemId(stack).toString()`（`ns:值`）。CE 同时带 plugin.yml 与 paper-plugin.yml → classloader 隔离，必须反射。**采用方案**（P9 已落码 `util/MaidItems`）：按核对签名实现 + 运行时自检；CE 缺物品 ID 就回落原版材质并告警。**物品互认兜底**：身份只认 `catmaid:maid_id` / `catmaid:soul_talisman` 两个 PDC 键，与材质/CE ID 无关，切 provider 旧物品不作废。**未实测**：CE 构造路径（测试服 CE 无任何物品定义，api-facts 24.3-6） |
-| CE 合并 BM 包后模型/物品渲染异常（P10-10.3） | [待验证] P0 最终定案走双包分离、方案 A（merge-external-zip-files）无通过记录；合并前先在测试服验证。降级：退回双包分离（代价：进服两次下载），结论记录回 api-facts |
+| CE 合并 BM 包后模型/物品渲染异常（P10-10.3 craftengine 路线） | [渲染项已解决] send_pack 故障已修复并实测通过（api-facts 4.3，2026-11-13）：CE 合并单包下模型 NPC 渲染正常无紫黑。启用 provider=craftengine 前剩余：CE 侧定义 catmaid:bell / catmaid:talisman 物品、provider 全链路实测（api-facts 24.3-6）。禁止混搭态的口径不变 |
 | 铃铛丢失导致女仆永久占位、玩家被上限锁死 | **事实**[已定位]：全灭 + 铃铛丢失时 maid 永远 alive=0 且占 `max-per-player` 名额。**采用方案**（P10-10.4）：DB 为绑定事实来源、物品只是凭证——`/catmaid bell` 补发（收同额复活材料）+ `/catmaid release` 自助送走（二次确认）；上限口径不变但出口常开 |
 | 对带原生库的依赖做 shade relocate | **事实**[2026-11-13 实测]：sqlite-jdbc 3.50.3.0 的动态库按硬编码 `org/sqlite/core/NativeDB` 注册 natives，导出表只有 `Java_org_sqlite_*`——relocate 到 `dev.catmaid.libs.sqlite` 后所有 native 方法绑定失败（插件自禁用）。**采用方案**（P10）：不 relocate（Paper 类加载器已隔离各插件），详见 api-facts 26.3。**通用教训**：shading 任何带 JNI 绑定的依赖前，先写最小探针验证 native 加载 |
 
