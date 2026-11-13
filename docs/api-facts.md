@@ -2397,103 +2397,116 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 
 ---
 
-## 25. 魂符重构：按车万女仆拆开"收纳"与"新增"（2026-11-13）
+## 25. 魂符：按车万女仆的 ItemSmartSlab 做成三态（2026-11-13）
 
-> **收口状态：代码完成 + 服务端启动零异常；交互链路待真人客户端验证。**
-> 本轮同时删除了 9.1 主副手物品显示（见 24 节顶部注），提交 `dbf1475`；魂符重构提交 `160632b`。
+> **收口状态：代码完成 + 服务端启动零异常；右键链路待真人客户端验证。**
+> 提交：`ad1dec9`（三态重构）、`dbf1475`（删手部物品显示）。
 
-### 25.1 为什么要重构（原设计的三个坑）
+### 25.1 起因
 
-原 9.2 让**同一张空魂符**既当召唤凭证又当收纳容器，靠"右键的是什么"分流：右键女仆 = 收纳，右键空地 = 召唤。实际用起来：
+第一版让空魂符同时承担"召唤凭证"和"收纳容器"，靠右键对象分流；第二版拆成"魂符 + 女仆契约"两件物品。
+两版都不对——**车万女仆的魂符本来就是一件物品的三种状态**，召唤用的那一态用掉后会变回空魂符。
+拆成两件物品的后果：召唤完手里没有符，玩家还得另外领一张才能收纳，且与 TLM 玩家的直觉冲突。
 
-1. **动作歧义**：想召唤时手一抖点到女仆，变成把她收进去；想收纳时点到空气，直接招出一只新的（还扣了魂符）。
-2. **状态矛盾**：名额满了召唤会失败，但同一张魂符右键女仆却能收纳成功——玩家无法从物品本身判断"这张符能干什么"。
-3. **预期错位**：收纳后魂符变回空的，玩家以为"又能召唤了"，而名额其实仍被收纳态占着。
+### 25.2 TLM 源码事实（1.20 分支，`TartaricAcid/TouhouLittleMaid`）
 
-### 25.2 车万女仆（TLM）的事实
+**一个类、三个 Type、三个物品 ID，但共用一个显示名**（`init/InitItems.java`、`item/ItemSmartSlab.java`）：
 
-来源：[biligame wiki · 魂符](https://wiki.biligame.com/mcplayer/%E8%BD%A6%E4%B8%87%E5%A5%B3%E4%BB%86%EF%BC%88Touhou_Little_Maid%EF%BC%89/%E9%AD%82%E7%AC%A6)、
-[MC百科 · 魂符 Soul Spell](https://mcmod.cn/item/391877.html)、[萌娘百科 · 车万女仆](https://zh.moegirl.org.cn/%E8%BD%A6%E4%B8%87%E5%A5%B3%E4%BB%86)。
+```java
+public enum Type { INIT, EMPTY, HAS_MAID }
+// smart_slab_init / smart_slab_empty / smart_slab_has_maid
+@Override public String getDescriptionId() { return "item.touhou_little_maid.smart_slab"; }
+```
 
-1. **魂符（Soul Spell，`touhou_little_maid:smart_slab`）只是存储工具**：可反复放出玩家已驯服的小女仆，
-   **空置时只能存一位**。手持空魂符对自己已驯服的女仆使用 = 储存；在合适空地使用 = 放出。
-   **它没有任何召唤功能。**
-2. **放出有落点校验**：目标位置不能在方块内部/水内/无碰撞体积的物体里，否则聊天栏提示
-   「这该死的地方不能放置女仆」。
-3. **新增女仆是另外三条路**，全都不经过魂符：
-   ① 开局赠送一个"已存有未知女仆的魂符"（**独立物品** `touhou_little_maid:smart_slab_init`）；
-   ② 前哨站笼子里自然生成，用蛋糕驯服；③ 祭坛消耗材料 + P 点召唤。
-4. **死亡复活也跟魂符无关**：死亡生成墓碑 → 主人挖出胶片 → 祭坛或神龛复活。
-5. **数据缺失有明确提示**：物品数据被改坏时 lore 显示「此魂符缺失小女仆数据」；丢失可用 `/tlm backup get` 找回。
-6. 衍生模组里的"怪兽战斗仪"是加强版（可存 3 位、shift+右键切槽位/远程回收），但**依然是容器**，
-   槽位模式只决定"收/放第几位"，不产出新女仆——进一步印证"容器不兼召唤"这条边界。
+**三条路径全部是"原地替换手里物品"，不是消耗**：
 
-### 25.3 重构后的物品分工（一件物品只干一件事）
+| 路径 | 源码 | 关键一行 |
+|---|---|---|
+| 未唤醒召唤 | `ItemSmartSlab#spawnNewMaid` | `player.setItemInHand(hand, SMART_SLAB_EMPTY.getDefaultInstance())` |
+| 装着女仆释放 | `ItemSmartSlab#spawnFromStore` | `player.setItemInHand(hand, SMART_SLAB_EMPTY.getDefaultInstance())` |
+| 空符收纳女仆 | `event/maid/SlabClickEvent#onInteract` | `player.setItemInHand(MAIN_HAND, maidSmartSlab.getDefaultInstance())` |
 
-| 物品 | PDC 标记 | 角色 | 右键女仆 | 右键方块/空气 | 数量语义 |
+配套细节（都照抄了）：
+
+1. **只有 EMPTY 能收纳**：`SlabClickEvent` 里写死 `stack.getItem() == emptySmartSlab`，
+   INIT / HAS_MAID 对着女仆不响应——所以不存在"靠右键对象猜意图"的歧义。
+2. **20 tick 冷却**：三条路径替换后都 `player.getCooldowns().addCooldown(..., 20)`。
+   我们用原版 `Player#setCooldown(Material, 20)`，客户端物品上有灰条。
+3. **名额校验**：`cap.canAdd() || creative`，满了提示 `can_not_add`，**不消耗、不变空**。
+4. **主人锁定**：INIT 可带 `InitMaidOwner`（开局赠送时写入），非本人右键 `InteractionResult.FAIL` + 提示。
+   我们用 PDC `soul_init_owner`。
+5. **落点校验**：`util/PlaceHelper#notSuitableForPlaceMaid` 只看点击方块上方**两格**的碰撞体积
+   （`getCollisionShape().isEmpty()`），不查脚下支撑、不查液体（水没有碰撞体积，所以能放水面）。
+   且 `useOn` 里要求 `clickedFace == Direction.UP`——对着侧面点不生效。
+6. **发光**：`isFoil()` 返回 `type != EMPTY`，非空态自带附魔光。我们用 UNBREAKING I + `HIDE_ENCHANTS`。
+7. **HAS_MAID 不能塞进容器**（`canFitInsideContainerItems()` 返回 false）——Bukkit 没有对应钩子，未实现。
+
+### 25.3 我们的实现（一物三态）
+
+材质统一 `AMETHYST_SHARD`（可配），状态靠 PDC：
+
+| 状态 | PDC | 名字 | 右键女仆 | 右键方块顶面 | 右键空气 |
 |---|---|---|---|---|---|
-| 铃铛 | `maid_id`（无 `soul_talisman`） | 复活凭证 | — | 复活（钻石 ×N） | 消耗 |
-| 魂符（空） | `soul_talisman` | 收纳容器 | 收纳她 | 只提示「对着女仆用」 | 换成"装着她的魂符" |
-| 魂符（装着） | `soul_talisman` + `maid_id` | 收纳容器 | 提示「已经装着她了」 | 释放（校验落点） | 变回空魂符 |
-| 女仆契约 | `maid_contract` | 召唤凭证 | 提示「对着地面用」 | 召唤一只 | 消耗 1 张 |
+| 未唤醒 | `soul_talisman` + `soul_init`(+`soul_init_owner`) | 未唤醒的魂符（发光） | 提示先唤醒 | 召唤 → **变空魂符** | 落在脚下召唤 → 变空魂符 |
+| 空 | `soul_talisman` | 猫娘魂符 | 收纳 → **变"装着她"** | 只提示 | 提示「对着女仆用」 |
+| 装着 | `soul_talisman` + `maid_id` | 装有 X 的魂符（发光） | 提示已装着她 | 释放 → **变空魂符** | 落在脚下释放 → 变空魂符 |
 
-- **契约**就是 TLM「开局魂符 / 祭坛」在我们这里的对应物：新增女仆的唯一玩家入口。
-  原版材质 `NAME_TAG`（可配 `interaction.contract-material`），CE 模式 ID `catmaid:contract`。
-- **开局赠送**：首次进服发 1 张契约（`interaction.grant-contract-on-first-join`）。
-  用玩家 PDC 的 `catmaid:init_contract_given` 去重，**不能用 `hasPlayedBefore()`**——它在
-  `PlayerJoinEvent` 里已经是 true，拿它判断会一个都发不出去。
-- **落点校验**（对齐 TLM 第 2 条）：脚下两格必须非实心、非液体，且脚下紧邻必须有实心支撑。
-  半砖/楼梯/树叶都算支撑，所以台阶边能放出；水里、贴墙、悬空会被拒并提示 `release-blocked`。
+**状态迁移全靠 `MaidItems#replaceHeld`**（对应 TLM 的 `setItemInHand`）：数量守恒、不掉地、背包满也不会丢符。
+手里是旧版堆叠（>1）时只扣一张、把新状态塞背包。
+
+**获取**：
+
+- `/catmaid talisman [数量]` → 空魂符（容器）
+- `/catmaid soul [数量]` → 未唤醒魂符（召唤），写入领取者 UUID 做锁定
+- 首次进服自动发 1 张未唤醒魂符（PDC `init_talisman_given` 去重；
+  配置 `interaction.grant-init-talisman-on-first-join`）——对应 TLM 的开局赠送
+
+**与 TLM 的有意差异**：
+
+1. **额外支持右键空气**：TLM 只认 `useOn`（必须对着方块顶面）。我们允许右键空气把女仆放在自己脚下，
+   否则玩家站在平地上往天上点会完全没反应。落点校验规则不变。
+2. **冷却按材质记**：TLM 按物品（INIT/EMPTY/HAS_MAID 各一份），我们三态同材质，共享 1 秒冷却。
+   实际体验差异只在"刚召唤完立刻收纳"会多等 1 秒。
+3. **没有实现"装着女仆的魂符不能进容器"**：Bukkit 没有 `canFitInsideContainerItems` 对应的钩子。
 
 ### 25.4 改动文件
 
 | 文件 | 改动 |
 |---|---|
-| `util/MaidItems.java` | 新增 `contract()` / `contract(int)` / `isContract()` 与 `maid_contract` 标记位、`contract-material` / `contract-id` 读取；`describe()` 打出三种物品材质 |
-| `listener/TalismanListener.java` | 分支改为 铃铛→装着的魂符→契约→空魂符（只提示）；`summon` 改吃契约、发 `contract-used`；`release` 增加 `canStandAt` 落点校验 |
-| `listener/MaidInteractListener.java` | 手持契约右键女仆 → 提示「对着地面用」，避免玩家一直拿契约点女仆 |
-| `listener/PlayerConnectionListener.java` | 新增 `grantInitContract`（首次进服赠契约，PDC 去重）；构造参数加 `Plugin`/`MaidItems` |
-| `command/CatMaidCommand.java` | 新增 `/catmaid contract [数量]`（独立冷却表 `contractReadyAt`）；子命令表与帮助同步 |
-| `config.yml` | `interaction.contract-material/contract-enabled/contract-cooldown-hours/grant-contract-on-first-join`；`dependency.craftengine.contract-id`；删 `hand-item.*`；魂符注释改成收纳语义 |
-| `messages.yml` | 新增 `contract-*`（7 个）、`talisman-empty-hint`、`release-blocked`；`talisman-lore` 改写为收纳说明；删已废弃的 `talisman-used`；帮助与 `no-maid` 同步 |
-| 删除 | `maid/HandItemDisplays.java`（9.1 整段）、`config.yml` 的 `hand-item.*`、主类里的创建与 shutdown |
+| `util/MaidItems.java` | 删 contract 三件套；新增 `initTalisman(owner)` / `isInitTalisman` / `initOwnerOf` / `replaceHeld` / `glow` / `talismanMaterial()`；`storedTalisman` 加发光 |
+| `listener/TalismanListener.java` | 分支改为 铃铛→装着→未唤醒→空（提示）；召唤/释放都走"替换成空魂符"；落点改为 TLM 规则（两格碰撞 + 只认顶面）；冷却改原版 `setCooldown` |
+| `listener/MaidInteractListener.java` | 收纳改为 `replaceHeld`（不再 consume + addItem）；未唤醒态对着女仆给提示 |
+| `listener/PlayerConnectionListener.java` | 开局赠送改发未唤醒魂符（带 owner 锁定），PDC 键 `init_talisman_given` |
+| `command/CatMaidCommand.java` | 新增 `/catmaid soul [数量]`（独立冷却 `soulReadyAt`），删 `/catmaid contract` |
+| `config.yml` | `interaction.soul-enabled/soul-cooldown-hours/grant-init-talisman-on-first-join`；删 `contract-*` 与 `dependency.craftengine.contract-id` |
+| `messages.yml` | 删 `contract-*`；新增 `init-talisman-*`（6 个）、`soul-*`（3 个）、`summon-blocked`、`place-only-on-top` |
 
 ### 25.5 冲突处理记录（agent.md 第 9 节格式）
 
 ```
 [CONFLICT] 蓝图位置: Phase 9-9.2「空魂符右键（不对女仆）→ 维持 P4 原语义（召唤新女仆）」
-现实情况: 同一物品同一按键承载"消耗品（召唤）"与"可复用容器（收纳）"两种互斥语义：
-         对着女仆点=收纳、对着空气点=召唤，误触代价不同（一个收回一只、一个凭空多一只）；
-         名额满时召唤失败但收纳仍成功，玩家无法从物品判断它现在能干什么。
-         车万女仆的魂符（Soul Spell）明确只是容器，新增女仆走开局赠送/自然生成/祭坛，两者从不共用物品。
-采用方案: 魂符退回纯容器；新增独立「女仆契约」承担召唤；首次进服赠送 1 张契约
-         理由: 与 TLM 的既有认知一致，玩家迁移零学习成本；一件物品一件事，右键行为不再靠猜
-```
-
-```
-[CONFLICT] 蓝图位置: Phase 9-9.1「主副手物品显示（骨骼优先 / 降级几何偏移）」
-现实情况: 骨骼路径物理不可行（24.3-1/2）；降级路径（独立 ItemDisplay + 硬编码偏移）实机观感不合格：
-         不跟手臂动画、坐下/走路/战斗三种姿态无法共用一组偏移，调参成本高于收益
-采用方案: 整段删除（代码、配置、文档一并移除）  理由: 服主验收明确否决，保留半成品只会继续消耗调参时间
+现实情况: ①同一物品同一按键承载消耗品与可复用容器两种互斥语义，靠右键对象分流会误触；
+         ②拆成"魂符 + 契约"两件物品后，召唤完手里没有魂符，与 TLM 玩家直觉冲突；
+         ③查 TLM 源码（ItemSmartSlab / SlabClickEvent）确认其做法是"一物三态 + 原地替换"，
+         召唤用掉的那一态会变成空魂符，整条链数量守恒。
+采用方案: 魂符做成三态（未唤醒 / 空 / 装着），三态之间用 replaceHeld 原地替换；/catmaid soul 发放未唤醒态
+         理由: 与 TLM 行为完全一致；一件物品一件事变成"一个状态一件事"，玩家不需要多领一张符
 ```
 
 ### 25.6 验收结果
 
 | 项 | 结论 | 证据 |
 |---|---|---|
-| 启动无异常 | ✅ | `凭证物品 provider=vanilla（铃铛 BELL，魂符 AMETHYST_SHARD，契约 NAME_TAG）`；`ERROR/SEVERE/Exception` 计数 0 |
-| 命令注册 | ✅ | 控制台执行 `catmaid contract` → 「该命令只能由玩家执行」；`catmaid` 帮助列表含新行 |
-| 文案合并 | ✅ | 删测试服 `messages.yml` 后重启，`contract-name`/`talisman-empty-hint`/`release-blocked` 全部自动补入 |
-| 空魂符不再召唤 | ⚠ 仅代码层 | 分支已切断（只发提示），真人右键未验 |
-| 契约召唤 / 落点校验 / 收纳闭环 | ⚠ 待客户端 | 无玩家在线时无法触发右键链路 |
+| 启动无异常 | ✅ | `凭证物品 provider=vanilla（铃铛 BELL，魂符 AMETHYST_SHARD）`；`ERROR/SEVERE/Exception` 0 |
+| 命令注册 | ✅ | 控制台 `catmaid soul` → 「该命令只能由玩家执行」；`catmaid contract` 已无输出（子命令已删） |
+| 文案合并 | ✅ | 删测试服 `messages.yml` 后重启，`init-talisman-name` / `soul-received` / `place-only-on-top` 全部自动补入 |
+| 三态迁移 / 落点 / 冷却 | ⚠ 待客户端 | 无玩家在线时无法触发右键链路；服务端只验到启动与命令 |
 
 ### 25.7 部署注意
 
-1. **旧魂符不受影响**：识别仍看 `soul_talisman` / `maid_id`，本轮只加了 `maid_contract` 一个新键，
-   玩家手里的旧魂符、装着女仆的魂符照常可用。
-2. **老玩家会收到一次开局契约**：PDC 标记此前不存在，升级后首次进服即触发（相当于一次性补偿）；
-   不想要就把 `interaction.grant-contract-on-first-join` 设为 false。
-3. **测试服 config.yml 不会自动长出新键**：`interaction.contract-*` 若沿用旧文件，代码走内置默认值
-   （`NAME_TAG` / 开启 / 24 小时 / 首次赠送开启）；要改手感就对照仓库模板手抄。
-4. **魂符与契约的冷却独立**：`talisman-cooldown-hours` 与 `contract-cooldown-hours` 各记一份，互不影响。
-5. **名额仍是硬上限**：契约召唤与管理员 summon 共用 `general.max-per-player`；收纳态照算名额。
+1. **上一轮发出去的「女仆契约」会变成普通命名牌**：`maid_contract` 识别已删除（插件未分发，不做兼容）。
+2. **旧魂符照常可用**：状态判定是"有无 `soul_init` / `maid_id`"，旧空魂符 = 空态、旧收纳符 = 装着态。
+3. **`config.yml` 不会自动长出新键**：`soul-*` 与 `grant-init-talisman-on-first-join` 沿用旧文件时走默认值
+   （开启 / 24 小时 / 首次赠送开启）。
+4. **落点比之前宽松**：现在允许水面、允许脚下没有支撑（TLM 同款）。想收紧就改
+   `TalismanListener#canPlaceMaidAt`，但别再引入"必须站在实心方块上"的限制——会把台阶边也挡掉。
