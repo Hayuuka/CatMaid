@@ -13,7 +13,6 @@ import dev.catmaid.listener.OwnerProtectionListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.listener.TalismanListener;
 import dev.catmaid.maid.AffectionTable;
-import dev.catmaid.maid.HandItemDisplays;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelAnimator;
@@ -46,7 +45,6 @@ public final class CatMaidPlugin extends JavaPlugin {
     private ModelRegistry modelRegistry;
     private ModelApplier modelApplier;
     private NameTagManager nameTagManager;
-    private HandItemDisplays handItemDisplays;
     private MaidItems maidItems;
     private BehaviorManager behaviorManager;
     private BukkitTask saveTask;
@@ -112,10 +110,6 @@ public final class CatMaidPlugin extends JavaPlugin {
         nameTagManager = new NameTagManager(this, getConfig());
         nameTagManager.start(maidManager::all);
 
-        // 主副手物品显示（P9）：模型盖住了原版装备层，这里单独把主手/副手物品显示出来
-        handItemDisplays = new HandItemDisplays(this, getLogger(), getConfig());
-        handItemDisplays.start(maidManager::all);
-
         getServer().getPluginManager().registerEvents(new PlayerConnectionListener(maidManager), this);
 
         // 交互层：右键开菜单/喂食 + 5 个 GUI 的点击/拖拽/关闭回写
@@ -175,9 +169,6 @@ public final class CatMaidPlugin extends JavaPlugin {
         }
         if (nameTagManager != null) {
             nameTagManager.shutdown();
-        }
-        if (handItemDisplays != null) {
-            handItemDisplays.shutdown();
         }
         if (maidManager != null) {
             maidManager.saveAll();
