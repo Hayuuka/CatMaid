@@ -237,7 +237,24 @@ BetterModel 还给 Citizens 注册了调试命令（需选中 NPC，**玩家可�
 
 ---
 
-## 4. 资源包方案（Phase 0 定案：**双包分离**）
+## 4. 资源包方案（Phase 0 定案：**双包分离**；P10-10.3 修订：**只走原版单包**）
+
+### 4.0 P10 修订：资源包分发走原版，CE 移除（2026-11-13，服主裁决）
+
+P0 的双包分离解决了"合并渲染"问题，但留下了"进服两次下载"（原版槽位发 BM 包 + CE 再发自己的包）。
+P10-10.3 按蓝图给出两条路线，**服主裁决走原版（provider=vanilla）**：
+
+- BM 包继续走原版 `server.properties` 槽位强制下发（`require-resource-pack=true`），这是唯一下发源；
+- CE 若仅为 CatMaid 而装则整体移除——测试服 CE 无任何 catmaid 物品定义（见 24.3-6），
+  已于 2026-11-13 把 `CraftEngine.jar` 与 `CraftEngine/` 从 `testserver/plugins/` 移到
+  `testserver/plugins-disabled/`（可逆备份），进服只弹一次下载；
+- 若生产服另有 CE 内容：CE 仍会发自己的包，两次下载依旧——取舍写在这里，不强行合并；
+- CE 合并路线（蓝图 10.3 的另一分支）**不再采用**：4.3 记录过 CE `send_pack` 在实测中未生效、
+  方案 A（merge-external-zip-files）也无通过记录，没有理由为一个已裁掉的功能保留双包复杂度；
+- 配置侧 `dependency.provider` 保持 `vanilla`（默认值），插件零改动——本节属部署事项（agent.md 1.5）。
+
+测试服现状核对（2026-11-13）：`packhost/catmaid-pack.zip` sha1 = `6f0f8d7183203b881d44798f5088e3358aee5b62`
+与 `server.properties` 一致；单次下载待客户端进服复核（蓝图 10.3 验收项）。
 
 ### 4.1 定案（已实机通过）
 
