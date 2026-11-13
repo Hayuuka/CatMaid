@@ -13,6 +13,7 @@ import org.bukkit.Location;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.World;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -162,8 +163,21 @@ public final class MaidInteractListener implements Listener {
         String itemName = hand.getType().name().toLowerCase(Locale.ROOT).replace('_', ' ');
         items.consumeOne(player, hand);
         playEatEffect(maid);
+        heal(maid, plugin.getConfig().getDouble("interaction.feed-heal", 6.0));
         affection.apply(maid, affection.gain(AffectionReason.FEED), AffectionReason.FEED);
         dialogue.send(maid, "on_feed", Map.of("item", itemName));
+    }
+
+    /** 喂食回血：夹紧到她的上限；没实体（理论到不了，喂食前提是有实体）或 amount<=0 时不动。 */
+    private void heal(Maid maid, double amount) {
+        if (amount <= 0) {
+            return;
+        }
+        LivingEntity entity = maid.entity();
+        if (entity == null) {
+            return;
+        }
+        entity.setHealth(Math.min(maid.getMaxHealth(), entity.getHealth() + amount));
     }
 
     private void playEatEffect(Maid maid) {

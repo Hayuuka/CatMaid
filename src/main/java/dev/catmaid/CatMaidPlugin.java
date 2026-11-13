@@ -13,6 +13,7 @@ import dev.catmaid.listener.OwnerProtectionListener;
 import dev.catmaid.listener.PlayerConnectionListener;
 import dev.catmaid.listener.TalismanListener;
 import dev.catmaid.maid.AffectionTable;
+import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelAnimator;
@@ -25,6 +26,7 @@ import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.trait.TraitInfo;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
@@ -50,6 +52,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private BukkitTask saveTask;
     private BukkitTask restoreTask;
     private BukkitTask behaviorTask;
+    private BukkitTask regenTask;
 
     public static CatMaidPlugin get() {
         return instance;
@@ -152,7 +155,31 @@ public final class CatMaidPlugin extends JavaPlugin {
         behaviorTask = getServer().getScheduler().runTaskTimer(this,
                 () -> behaviorManager.tickAll(maidManager.all()), 1L, 1L);
 
+        // 自然回血（combat.regen-interval-seconds）：低于上限才回，amount 每次实时读配置（admin reload 即调）
+        // 间隔本身在启动时定死（改间隔需重启）；amount<=0 时任务空转 = 关闭
+        long regenSeconds = Math.max(1, getConfig().getLong("combat.regen-interval-seconds", 5));
+        regenTask = getServer().getScheduler().runTaskTimer(this, () -> regenTick(), 20L * regenSeconds,
+                20L * regenSeconds);
+
         getLogger().info("已启用，当前女仆 " + maidManager.all().size() + " 只");
+    }
+
+    /** 每个回血周期：给所有有实体的女仆按 combat.regen-amount 回血，夹紧到各自上限。 */
+    private void regenTick() {
+        double amount = getConfig().getDouble("combat.regen-amount", 1.0);
+        if (amount <= 0) {
+            return;
+        }
+        for (Maid maid : maidManager.all()) {
+            LivingEntity entity = maid.entity();
+            if (entity == null || !entity.isValid()) {
+                continue;
+            }
+            double max = maid.getMaxHealth();
+            if (entity.getHealth() < max) {
+                entity.setHealth(Math.min(max, entity.getHealth() + amount));
+            }
+        }
     }
 
     @Override
@@ -168,6 +195,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         if (behaviorTask != null) {
             behaviorTask.cancel();
             behaviorTask = null;
+        }
+        if (regenTask != null) {
+            regenTask.cancel();
+            regenTask = null;
         }
         if (nameTagManager != null) {
             nameTagManager.shutdown();

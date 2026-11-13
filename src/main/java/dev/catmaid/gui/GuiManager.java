@@ -14,6 +14,7 @@ import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -237,6 +238,13 @@ public final class GuiManager implements Listener {
 
         List<Component> lore = new ArrayList<>();
         Messages.getList("gui.info-lore-top", ph).forEach(line -> lore.add(noItalic(line)));
+        LivingEntity entity = maid.entity();
+        if (entity != null) {
+            // 血量只在有实体时展示；收纳态没有实体，这行整个省略（信息书每次打开菜单都重建，实时读取）
+            ph.put("health", String.format(Locale.ROOT, "%.1f", entity.getHealth()));
+            ph.put("max_health", String.format(Locale.ROOT, "%.1f", maid.getMaxHealth()));
+            lore.add(noItalic(Messages.get("gui.info-health", ph)));
+        }
         if (maid.isStored()) {
             // 收纳态没有实体，界面上必须写清楚她在哪，否则玩家会以为女仆丢了（蓝图 9.2）
             lore.add(noItalic(Messages.get("gui.info-stored")));

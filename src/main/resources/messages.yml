@@ -203,6 +203,8 @@ gui:
     - "<gray>称呼：<white>{title}"
     - "<gray>好感度：<light_purple>{affection}<gray> / 100 <dark_gray>({level})"
     - "<gray>模式：<white>{mode}"
+  # 血量行只在女仆有实体时显示（收纳态省略）；{health}=当前血量 {max_health}=上限（来自 combat.maid-max-health）
+  info-health: "<gray>血量：<red>{health}<gray> / {max_health}"
   info-equipment-label: "<gray>装备："
   info-equipment-empty: "<dark_gray>未装备"
   info-lore-bottom:

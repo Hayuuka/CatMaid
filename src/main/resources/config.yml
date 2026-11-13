@@ -138,6 +138,8 @@ interaction:
   grant-init-talisman-on-first-join: true
   # 喂食冷却：同一只女仆两次喂食的最小间隔
   feed-cooldown-seconds: 60
+  # 喂食一次回的血量（0 = 喂食不回血）
+  feed-heal: 6.0
   # 可喂的食物（手持其中之一右键女仆 = 喂食，而不是开菜单）
   feedable:
     - BREAD
@@ -224,6 +226,10 @@ combat:
   # 女仆血量上限。玩家型 NPC 默认 20 血，不改上限她打不过两只僵尸；
   # 每次实体生成都会重设上限并回满（Citizens 重建实体会把这两样都丢掉）
   maid-max-health: 40
+  # 自然回血：每 regen-interval-seconds 秒低于上限时回 regen-amount 血。
+  # amount<=0 关闭；amount 支持 admin reload 即时生效，改 interval 需重启
+  regen-amount: 1.0
+  regen-interval-seconds: 5
 
 # ---- Phase 9 体验扩展 ----
 
