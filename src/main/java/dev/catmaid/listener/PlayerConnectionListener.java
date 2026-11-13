@@ -25,7 +25,7 @@ public final class PlayerConnectionListener implements Listener {
      * <p>不用 {@code hasPlayedBefore()}：这个值在 {@code PlayerJoinEvent} 里已经是 true（玩家数据已落盘），
      * 拿它判断"新玩家"会一个都发不出去。
      */
-    private static final String KEY_INIT_CONTRACT = "init_contract_given";
+    private static final String KEY_INIT_GIVEN = "init_talisman_given";
 
     private final Plugin plugin;
     private final MaidManager maidManager;
@@ -59,26 +59,26 @@ public final class PlayerConnectionListener implements Listener {
     }
 
     /**
-     * 开局赠送一个女仆契约（对应 TLM「进入世界的新玩家会获得一个魂符」）。
+     * 开局赠送一张<b>未唤醒</b>的魂符（对应 TLM「进入世界的新玩家会获得一个魂符」）。
      *
-     * <p>为什么必须有这个口：魂符已按 TLM 的语义改成纯收纳容器、不再召唤，
-     * 新玩家如果只能自己搓魂符，就永远招不出第一只女仆（TLM 靠开局魂符 + 祭坛解决同一件事）。
+     * <p>为什么必须有这个口：空魂符只负责收纳，能召唤的是"未唤醒"那一态；没有它新玩家
+     * 永远招不出第一只女仆。送出的那张写了 `soul_init_owner`，转手给别人也放不出来。
      *
      * <p>用 PDC 标记去重：老玩家升级后也会收到一次（相当于补偿），但绝不会重复发。
      */
     private void grantInitContract(Player player) {
-        if (!plugin.getConfig().getBoolean("interaction.grant-contract-on-first-join", true)) {
+        if (!plugin.getConfig().getBoolean("interaction.grant-init-talisman-on-first-join", true)) {
             return;
         }
-        NamespacedKey key = new NamespacedKey(plugin, KEY_INIT_CONTRACT);
+        NamespacedKey key = new NamespacedKey(plugin, KEY_INIT_GIVEN);
         var pdc = player.getPersistentDataContainer();
         if (pdc.has(key, PersistentDataType.BYTE)) {
             return;
         }
         pdc.set(key, PersistentDataType.BYTE, (byte) 1);
-        player.getInventory().addItem(items.contract()).values()
+        player.getInventory().addItem(items.initTalisman(player.getUniqueId())).values()
                 .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
-        Messages.send(player, "contract-init");
+        Messages.send(player, "init-talisman-given");
     }
 
     @EventHandler

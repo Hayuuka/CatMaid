@@ -23,6 +23,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.NotNull;
 
@@ -71,8 +72,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
 
     /** 魂符自助领取的冷却：玩家 UUID → 可以再领的时间戳（毫秒）。 */
     private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
-    /** 契约的自助领取冷却，与魂符分开记——两种物品用途不同，共用一个冷却会让玩家二选一 */
-    private final Map<UUID, Long> contractReadyAt = new HashMap<>();
+    /** 未唤醒魂符（召唤用）的领取冷却，与空魂符分开记——两者用途不同 */
+    private final Map<UUID, Long> soulReadyAt = new HashMap<>();
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
@@ -102,7 +103,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "rename" -> rename(sender, args);
             case "title" -> title(sender, args);
             case "talisman" -> talisman(sender, args);
-            case "contract" -> contract(sender, args);
+            case "soul" -> soul(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
         }
@@ -559,10 +560,13 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
     }
 
     /**
-     * 发放女仆契约（召唤凭证）。与 {@link #talisman} 是两套物品：
-     * 魂符负责收纳，契约负责召唤（2026-11-13 按车万女仆语义拆分，见 api-facts 25.2）。
+     * 发放「未唤醒的魂符」（召唤凭证，TLM 的 {@code smart_slab_init}）。
+     *
+     * <p>与 {@link #talisman} 是同一件物品的不同状态：这张用掉后原地变回空魂符，
+     * 所以玩家领一张就能走完"唤醒 → 收人 → 放出"整条链（api-facts 25.2）。
+     * 发出的符写了领取者 UUID，转手给别人放不出来。
      */
-    private void contract(CommandSender sender, String[] args) {
+    private void soul(CommandSender sender, String[] args) {
         if (!(sender instanceof Player player)) {
             Messages.send(sender, "player-only");
             return;
@@ -571,32 +575,35 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             Messages.send(player, "no-permission");
             return;
         }
-        if (!plugin.getConfig().getBoolean("interaction.contract-enabled", true)) {
-            Messages.send(player, "contract-disabled");
+        if (!plugin.getConfig().getBoolean("interaction.soul-enabled", true)) {
+            Messages.send(player, "soul-disabled");
             return;
         }
         long cooldownMs = Math.max(0,
-                plugin.getConfig().getLong("interaction.contract-cooldown-hours", 24)) * 3600_000L;
+                plugin.getConfig().getLong("interaction.soul-cooldown-hours", 24)) * 3600_000L;
         long now = System.currentTimeMillis();
-        long readyAt = contractReadyAt.getOrDefault(player.getUniqueId(), 0L);
+        long readyAt = soulReadyAt.getOrDefault(player.getUniqueId(), 0L);
         if (now < readyAt) {
             long minutes = Math.max(1, (readyAt - now) / 60_000L);
-            Messages.send(player, "contract-cooldown", Map.of("minutes", String.valueOf(minutes)));
+            Messages.send(player, "soul-cooldown", Map.of("minutes", String.valueOf(minutes)));
             return;
         }
         int amount = 1;
         if (args.length >= 2) {
             try {
-                amount = Math.max(1, Math.min(64, Integer.parseInt(args[1])));
+                amount = Math.max(1, Math.min(16, Integer.parseInt(args[1])));
             } catch (NumberFormatException e) {
                 sendHelp(player);
                 return;
             }
         }
-        player.getInventory().addItem(items.contract(amount)).values()
-                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
-        contractReadyAt.put(player.getUniqueId(), now + cooldownMs);
-        Messages.send(player, "contract-received", Map.of("amount", String.valueOf(amount)));
+        for (int i = 0; i < amount; i++) {
+            ItemStack soul = items.initTalisman(player.getUniqueId());
+            player.getInventory().addItem(soul).values()
+                    .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        }
+        soulReadyAt.put(player.getUniqueId(), now + cooldownMs);
+        Messages.send(player, "soul-received", Map.of("amount", String.valueOf(amount)));
     }
 
     private void summon(CommandSender sender, String[] args) {

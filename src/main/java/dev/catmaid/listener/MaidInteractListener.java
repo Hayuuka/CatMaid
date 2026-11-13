@@ -73,13 +73,13 @@ public final class MaidInteractListener implements Listener {
             Messages.send(player, "talisman-occupied", Map.of("name", maid.getName()));
             return;
         }
-        if (items.isTalisman(hand)) {
-            store(player, maid, hand);
+        if (items.isInitTalisman(hand)) {
+            // 未唤醒的魂符还没装人，对着女仆没有收纳语义（TLM 的 INIT 对着女仆同样不响应）
+            Messages.send(player, "init-talisman-on-maid");
             return;
         }
-        if (items.isContract(hand)) {
-            // 契约是"对地召唤"的凭证，不是对女仆用的——不说清楚玩家会一直拿它点女仆
-            Messages.send(player, "contract-on-maid");
+        if (items.isTalisman(hand)) {
+            store(player, maid, hand);
             return;
         }
         if (isFeedable(hand)) {
@@ -97,9 +97,9 @@ public final class MaidInteractListener implements Listener {
     /**
      * 空魂符右键自己的女仆 = 把她收进魂符（蓝图 P9-9.2，语义对齐 TLM 的 Soul Spell）。
      *
-     * <p>票证语义：手上的空魂符变成"装着她的魂符"，所以是"消耗一张、给一张"而不是凭空生成——
-     * 玩家手里的魂符数量守恒，掉落/丢失的后果才说得清（P10-10.4 的凭证据此补发）。
-     * 魂符只管收纳，召唤走女仆契约，两者不再混在同一件物品上（api-facts 25.2）。
+     * <p>票证语义：手上的空魂符**原地变成**"装着她的魂符"（数量不变、不掉地），
+     * 与 TLM 的 {@code player.setItemInHand(...)} 完全一致；放出时再变回空的。
+     * 召唤不是这里的职责——未唤醒态的魂符对着地面右键才会召唤（api-facts 25.2）。
      */
     private void store(Player player, Maid maid, ItemStack talisman) {
         if (!maid.isAlive()) {
@@ -115,10 +115,9 @@ public final class MaidInteractListener implements Listener {
             return;
         }
         playStoreEffect(player);
-        items.consumeOne(player, talisman);
-        ItemStack stored = items.storedTalisman(maid);
-        player.getInventory().addItem(stored).values()
-                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        // 票证语义（TLM 的 SlabClickEvent）：手里那张原地变成"装着她"，不是消耗 + 新给一张
+        items.replaceHeld(player, talisman, items.storedTalisman(maid));
+        player.setCooldown(items.talismanMaterial(), 20);
         dialogue.send(maid, "on_store");
         Messages.send(player, "store-success", Map.of("name", maid.getName()));
     }

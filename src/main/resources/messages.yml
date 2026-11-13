@@ -43,17 +43,17 @@ help:
   - "<gray>/catmaid info <dark_gray>—</dark_gray> 查看自己女仆的状态"
   - "<gray>/catmaid rename <名字> <dark_gray>—</dark_gray> 改名（好感够才行）"
   - "<gray>/catmaid title <称呼> <dark_gray>—</dark_gray> 改她对你的称呼"
-  - "<gray>/catmaid talisman [数量] <dark_gray>—</dark_gray> 领几张魂符（收纳/放出女仆）"
-  - "<gray>/catmaid contract [数量] <dark_gray>—</dark_gray> 领几张女仆契约（召唤）"
+  - "<gray>/catmaid talisman [数量] <dark_gray>—</dark_gray> 领几张空魂符（收纳/放出女仆）"
+  - "<gray>/catmaid soul [数量] <dark_gray>—</dark_gray> 领几张未唤醒的魂符（召唤）"
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
   - "<gray>/catmaid admin remove <玩家|女仆UUID>"
   - "<gray>/catmaid admin setaffection <女仆UUID> <数值>"
   - "<gray>/catmaid admin reload <dark_gray>—</dark_gray> 重载 config 与台词"
-  - "<dark_gray>手持契约右键 = 召唤；魂符右键女仆 = 收纳；装着她的魂符右键空地 = 放出；食物右键女仆 = 喂食。"
+  - "<dark_gray>未唤醒的魂符对地右键 = 召唤；空魂符右键女仆 = 收纳；装着她的魂符右键空地 = 放出；食物右键女仆 = 喂食。"
 
 # 玩家侧命令找不到女仆时的两种提示
-no-maid: "<red>你还没有女仆。用女仆契约召唤一只吧。"
+no-maid: "<red>你还没有女仆。用未唤醒的魂符召唤一只吧。"
 no-maid-nearby: "<red>附近（{radius} 格内）没有你的女仆。"
 
 # ---- Phase 8 玩家侧命令 ----
@@ -133,20 +133,24 @@ talisman-name: "<light_purple>猫娘魂符"
 talisman-lore:
   - "<gray>空的时候：对着自己的女仆右键，把她收进来。"
   - "<gray>装着她的时候：对着空地右键，把她放出来。"
-  - "<dark_gray>魂符只是个盒子，不会召唤新的女仆。"
+  - "<dark_gray>想召唤新的女仆，得用「未唤醒的魂符」。"
 talisman-received: "<green>获得 {amount} 张魂符。"
 talisman-empty-hint: "<gray>空魂符要对着自己的女仆用：先收人，再对着空地放出来。"
 
-contract-name: "<light_purple>女仆契约"
-contract-lore:
-  - "<gray>拿在手里右键，召唤一只猫娘女仆。"
-  - "<dark_gray>一张契约只够唤醒一位，用掉就没了。"
-contract-received: "<green>获得 {amount} 张女仆契约。"
-contract-used: "<light_purple>{name} 回应了契约，成了你的女仆！"
-contract-cooldown: "<gray>新的契约还没备好，大约还要 {minutes} 分钟。"
-contract-disabled: "<gray>服主关掉了契约的自助领取，找管理员要吧。"
-contract-init: "<light_purple>附赠一张女仆契约：对着地面右键，她就会来。"
-contract-on-maid: "<gray>契约要对着地面用。想把她收起来，请用魂符右键她。"
+# 未唤醒的魂符 = 会召唤的那一态（TLM 的 smart_slab_init）；用掉后原地变回空魂符
+init-talisman-name: "<light_purple>未唤醒的魂符"
+init-talisman-lore:
+  - "<gray>对着地面右键，唤醒一位猫娘女仆。"
+  - "<dark_gray>唤醒之后，这张符就能用来收纳她了。"
+init-talisman-used: "<light_purple>{name} 应声醒来，成了你的女仆！"
+init-talisman-given: "<light_purple>附赠一张未唤醒的魂符：对着地面右键，她就会来。"
+init-talisman-on-maid: "<gray>这张符还没唤醒——先对着地面右键把她放出来。"
+init-talisman-not-yours: "<gray>这张魂符认的不是你，毫无反应。"
+soul-received: "<green>获得 {amount} 张未唤醒的魂符。"
+soul-cooldown: "<gray>新的魂符还没备好，大约还要 {minutes} 分钟。"
+soul-disabled: "<gray>服主关掉了未唤醒魂符的自助领取，找管理员要吧。"
+summon-blocked: "<red>这里放不下她（脚下两格被挡住），换个地方吧。"
+place-only-on-top: "<gray>要对着方块顶面用：站在地上，右键脚边那格。"
 
 # ---- Phase 2 界面文案 ----
 gui:

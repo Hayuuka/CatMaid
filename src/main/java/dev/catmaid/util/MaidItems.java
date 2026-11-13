@@ -6,7 +6,9 @@ import net.kyori.adventure.text.format.TextDecoration;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -23,12 +25,16 @@ import java.util.logging.Logger;
 
 /**
  * 女仆相关凭证物品的<b>唯一工厂与识别器</b>（蓝图 P9-9.3）：
- * 铃铛（倒下后的形态）、魂符（收纳容器）、女仆契约（召唤凭证）。
+ * 铃铛（倒下后的形态）、魂符（三种状态）。
  *
- * <p><b>魂符与契约是两种物品</b>（2026-11-13 按车万女仆的魂符语义重构，见 api-facts 25.2）：
- * TLM 的魂符（Soul Spell）只是"存一位女仆的容器"，空置才能存、对着自己的女仆收取、在空地放出，
- * <b>没有召唤功能</b>；新增女仆走开局赠送/自然生成/祭坛。我们把这两件事拆成：
- * 魂符 = 收纳/释放（可反复用，数量守恒），契约 = 召唤（消耗品，用一张得一只）。
+ * <p><b>魂符一物三态</b>（2026-11-13 按车万女仆源码重构，见 api-facts 25.2）：
+ * TLM 的 `ItemSmartSlab` 用一个类 + 三个 Type（`INIT` / `EMPTY` / `HAS_MAID`）实现同一件"魂符"：
+ * INIT 右键地面召唤一只随机女仆、<b>用掉后原地变空魂符</b>；EMPTY 对着自己的女仆收纳、
+ * 变成 HAS_MAID；HAS_MAID 对着空地放出、<b>又变回空魂符</b>。整条链数量守恒、一张符贯穿始终。
+ *
+ * <p>我们照抄这个结构，三种状态靠 PDC 区分（材质、名字前缀不同）：
+ * 未唤醒 = {@code soul_talisman} + {@code soul_init}；空 = 只有 {@code soul_talisman}；
+ * 装着 = 再加 {@code maid_id}。状态之间用"原地替换手里物品"迁移，不做消耗。
  *
  * <p>为什么要有"依赖模式"（{@code dependency.provider}）：服主可以在原版物品和 CraftEngine
  * 自定义物品之间二选一——后者外观更好，但需要 CE 侧先定义物品 ID。所有构造/识别都收在这一个类里，
@@ -47,10 +53,12 @@ public final class MaidItems {
 
     /** 铃铛/收纳魂符 → 女仆 UUID（字符串）。 */
     private static final String KEY_MAID_ID = "maid_id";
-    /** 魂符标记位（收纳容器）。 */
+    /** 魂符标记位（三种状态都有）。 */
     private static final String KEY_TALISMAN = "soul_talisman";
-    /** 女仆契约标记位（召唤凭证）。 */
-    private static final String KEY_CONTRACT = "maid_contract";
+    /** 未唤醒标记位：有它 = 还能召唤一只（TLM 的 Type.INIT）。 */
+    private static final String KEY_INIT = "soul_init";
+    /** 未唤醒魂符的主人锁定（开局赠送时写入，防止转手给别人用）。 */
+    private static final String KEY_INIT_OWNER = "soul_init_owner";
 
     private static final String CE_ITEMS_API = "net.momirealms.craftengine.bukkit.api.CraftEngineItems";
 
@@ -59,10 +67,8 @@ public final class MaidItems {
     private final Provider provider;
     private final Material bellMaterial;
     private final Material talismanMaterial;
-    private final Material contractMaterial;
     private final String ceBellId;
     private final String ceTalismanId;
-    private final String ceContractId;
 
     // ---- CraftEngine 反射句柄（它是 paper-plugin，classloader 隔离，只能反射） ----
     private boolean ceTried;
@@ -81,16 +87,17 @@ public final class MaidItems {
         this.talismanMaterial = firstItem(
                 plugin.getConfig().getString("interaction.talisman-material", "AMETHYST_SHARD"),
                 Material.AMETHYST_SHARD);
-        this.contractMaterial = firstItem(
-                plugin.getConfig().getString("interaction.contract-material", "NAME_TAG"),
-                Material.NAME_TAG);
         this.ceBellId = plugin.getConfig().getString("dependency.craftengine.bell-id", "catmaid:bell");
         this.ceTalismanId = plugin.getConfig().getString("dependency.craftengine.talisman-id", "catmaid:talisman");
-        this.ceContractId = plugin.getConfig().getString("dependency.craftengine.contract-id", "catmaid:contract");
     }
 
     public Provider provider() {
         return provider;
+    }
+
+    /** 魂符的材质（三态共用）。释放/召唤后的原版冷却按材质记，所以监听器要拿它。 */
+    public Material talismanMaterial() {
+        return talismanMaterial;
     }
 
     private static Provider parseProvider(String raw) {
@@ -146,28 +153,63 @@ public final class MaidItems {
         // applyMeta 会覆盖 PDC，魂符标记要在它之后补上
         ItemMeta meta = item.getItemMeta();
         meta.getPersistentDataContainer().set(key(KEY_TALISMAN), PersistentDataType.BYTE, (byte) 1);
+        glow(meta);
         item.setItemMeta(meta);
         warnIfLostCeIdentity(item, ceTalismanId);
         return item;
     }
 
-    /** 女仆契约：召唤新女仆的凭证。用一张得一只，不能反复用（与魂符的容器语义分开）。 */
-    public ItemStack contract() {
-        return contract(1);
+    /**
+     * 未唤醒的魂符：还能召唤一只（TLM 的 {@code Type.INIT}，物品 ID {@code smart_slab_init}）。
+     *
+     * <p><b>用掉之后变回空魂符</b>（由监听器原地替换），不是消耗品——这一条是 TLM 的核心设计，
+     * 照抄过来玩家才能"一张符先唤醒、再收人、再放出"。
+     *
+     * @param ownerId 主人 UUID（写进 PDC 做锁定，别人右键放不出来）；传 null 表示不锁定
+     */
+    public ItemStack initTalisman(UUID ownerId) {
+        ItemStack item = base(ceTalismanId, talismanMaterial);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(noItalic(Messages.get("init-talisman-name")));
+        List<Component> lore = new ArrayList<>();
+        Messages.getList("init-talisman-lore").forEach(line -> lore.add(noItalic(line)));
+        meta.lore(lore);
+        var pdc = meta.getPersistentDataContainer();
+        pdc.set(key(KEY_TALISMAN), PersistentDataType.BYTE, (byte) 1);
+        pdc.set(key(KEY_INIT), PersistentDataType.BYTE, (byte) 1);
+        if (ownerId != null) {
+            pdc.set(key(KEY_INIT_OWNER), PersistentDataType.STRING, ownerId.toString());
+        }
+        glow(meta);
+        item.setItemMeta(meta);
+        warnIfLostCeIdentity(item, ceTalismanId);
+        return item;
     }
 
-    public ItemStack contract(int amount) {
-        ItemStack item = base(ceContractId, contractMaterial);
-        item.setAmount(Math.max(1, amount));
-        ItemMeta meta = item.getItemMeta();
-        meta.displayName(noItalic(Messages.get("contract-name")));
-        List<Component> lore = new ArrayList<>();
-        Messages.getList("contract-lore").forEach(line -> lore.add(noItalic(line)));
-        meta.lore(lore);
-        meta.getPersistentDataContainer().set(key(KEY_CONTRACT), PersistentDataType.BYTE, (byte) 1);
-        item.setItemMeta(meta);
-        warnIfLostCeIdentity(item, ceContractId);
-        return item;
+    /** 未唤醒魂符的主人锁定；没锁定（或数据被改坏）返回 null。 */
+    public UUID initOwnerOf(ItemStack item) {
+        var pdc = pdc(item);
+        if (pdc == null) {
+            return null;
+        }
+        String raw = pdc.get(key(KEY_INIT_OWNER), PersistentDataType.STRING);
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 附魔光：TLM 的 {@code isFoil()} 只有非 EMPTY 才发光，玩家一眼能看出"这张符里有人"。
+     * 用 UNBREAKING I + 隐藏附魔标记，不产生实际属性。
+     */
+    private void glow(ItemMeta meta) {
+        meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+        meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
     }
 
     private void applyMeta(ItemStack item, Component name, List<Component> lore, UUID maidId) {
@@ -222,13 +264,13 @@ public final class MaidItems {
         return pdc != null && pdc.has(key(KEY_MAID_ID), PersistentDataType.STRING);
     }
 
-    /** 女仆契约（召唤凭证）。与魂符是两个独立标记位，互不误判。 */
-    public boolean isContract(ItemStack item) {
-        if (item == null || item.getType().isAir()) {
+    /** 未唤醒的魂符（还能召唤一只）。 */
+    public boolean isInitTalisman(ItemStack item) {
+        if (!isTalisman(item)) {
             return false;
         }
         PersistentDataContainer pdc = pdc(item);
-        return pdc != null && pdc.has(key(KEY_CONTRACT), PersistentDataType.BYTE);
+        return pdc != null && pdc.has(key(KEY_INIT), PersistentDataType.BYTE);
     }
 
     /** 铃铛 / 收纳魂符里记的女仆 UUID；不是这两种物品（或数据被改坏）返回 null。 */
@@ -248,7 +290,27 @@ public final class MaidItems {
         }
     }
 
-    /** 主手物品减 1，用完即清空。喂食、用铃铛、用魂符都是这个语义。 */
+    /**
+     * 原地替换手里的魂符（TLM 的 {@code setItemInHand} 语义）。
+     *
+     * <p>魂符三态之间靠这个迁移：未唤醒→空、空→装着、装着→空。不是"消耗 + 新给一张"，
+     * 所以数量守恒、不会掉地、也不会因为背包满而丢符。
+     *
+     * <p>手里只有一张时直接换；万一手里是旧版堆叠（>1），只扣一张、把新状态塞背包——
+     * 宁可多一步也不能把玩家的符吃掉。
+     */
+    public void replaceHeld(Player player, ItemStack held, ItemStack replacement) {
+        if (held.getAmount() > 1) {
+            held.setAmount(held.getAmount() - 1);
+            player.getInventory().setItemInMainHand(held);
+            player.getInventory().addItem(replacement).values()
+                    .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+            return;
+        }
+        player.getInventory().setItemInMainHand(replacement);
+    }
+
+    /** 主手物品减 1，用完即清空。喂食、用铃铛都是这个语义（魂符不走这里，见 replaceHeld）。 */
     public void consumeOne(Player player, ItemStack item) {
         int amount = item.getAmount();
         if (amount <= 1) {
@@ -361,11 +423,8 @@ public final class MaidItems {
     public String describe() {
         if (provider == Provider.CRAFTENGINE) {
             return "provider=craftengine（铃铛 " + ceBellId + "，魂符 " + ceTalismanId
-                    + "，契约 " + ceContractId + "；CE 缺失时回落 "
-                    + bellMaterial.name() + " / " + talismanMaterial.name() + " / "
-                    + contractMaterial.name() + "）";
+                    + "；CE 缺失时回落 " + bellMaterial.name() + " / " + talismanMaterial.name() + "）";
         }
-        return "provider=vanilla（铃铛 " + bellMaterial.name() + "，魂符 " + talismanMaterial.name()
-                + "，契约 " + contractMaterial.name() + "）";
+        return "provider=vanilla（铃铛 " + bellMaterial.name() + "，魂符 " + talismanMaterial.name() + "）";
     }
 }
