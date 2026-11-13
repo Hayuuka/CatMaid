@@ -27,13 +27,20 @@
 
 **方法一：**
 
-   1.下载Releases中的本插件和Citizens2、BetterModel插件一同放入服务器插件文件夹
+1. 下载 Release 中的 `CatMaid-1.0.0.jar`（插件）与 `CatMaid-Models-1.0.0.zip`（模型包，含授权文件）
+2. 安装依赖插件并核对版本：
+   - **Citizens2 2.0.44-SNAPSHOT (build 4269)**：官方 Jenkins 发布页
+   - **BetterModel 3.6.0**：官方发布页（Modrinth / GitHub Releases）
+   - 三者一同放入服务器 `plugins/` 文件夹
+3. 解压 `CatMaid-Models-1.0.0.zip` 到 `plugins/BetterModel/models/`（解压后该目录下应出现 27 个 `.bbmodel`）
+4. 启动服务器并进行配置：
+   - `config.yml` 的 `models:` 名单补入模型名（名单 = 模型文件名去扩展名，须与 models 目录一致）
+   - BetterModel 生成的模型 zip 挂到静态 HTTP，写入 `server.properties` 的 `resource-pack` / `resource-pack-sha1` / `require-resource-pack=true`
+5. 开玩：新玩家进服自动领一张未唤醒的魂符，对地右键即召唤
 
-   2.启动服务器并进行配置
+**方法二（自行构建）：**
 
-**方法二：**
-
-1. **构建**：`gradlew shadowJar`，产物在 `build/libs/CatMaid-0.1.0.jar`
+1. **构建**：`gradlew shadowJar`，产物在 `build/libs/CatMaid-1.0.0.jar`
 2. **部署**：jar 放入 `plugins/`，连同 Citizens、BetterModel 一起启动
 3. **模型包**：BetterModel 生成的模型 zip 挂到静态 HTTP 并写入 `server.properties` 的 `resource-pack` / `resource-pack-sha1` / `require-resource-pack=true`
 4. **配置**：首次启动自动生成 `plugins/CatMaid/config.yml`（含注释）；各键含义见 **docs/config-guide.md**
@@ -75,5 +82,20 @@
 
 ## 许可
 
-- 代码许可见 `LICENSE`
-- 女仆模型素材来自车万女仆（TLM）项目，**CC BY-NC-SA 4.0**：仅限非商用服务器使用，须署名 TartaricAcid 与车万女仆项目
+**分层授权：**
+
+- **代码**（`src/`、`tools/`、`docs/`、构建脚本）：[MIT](LICENSE)，可自由使用、修改、分发
+- **女仆模型素材**（`model_src/` 下全部 `.bbmodel` 及其派生物，含服务器资源包中的模型内容）：
+  改编自车万女仆（Touhou Little Maid）项目美术资源，**CC BY-NC-SA 4.0**——仅限非商用、
+  须署名 TartaricAcid 与车万女仆项目、改编物以相同协议共享。
+  详细边界与服务器使用规则见 **[LICENSE-MODELS.md](LICENSE-MODELS.md)**
+
+## 免责声明
+
+1. 本插件按"现状"提供，**不附带任何形式的担保**；作者不保证其可用性、稳定性或不间断运行，
+   使用本插件（含模型素材）产生的一切后果由服务器运营者自行承担。
+2. 本插件为社区同人性质的实验作品，与 Mojang/Microsoft、TartaricAcid 及车万女仆项目、
+   上海艺术电影制片厂（东方 Project 相关权利方）**无任何隶属或合作关系**。
+3. 模型素材的授权边界以 [LICENSE-MODELS.md](LICENSE-MODELS.md) 为准；服务器运营者有义务
+   在其分发场景（含资源包下发）中遵守对应署名与非商用条款，逾期不遵循的责任由运营者承担。
+4. 如素材权利人认为本仓库的使用方式侵犯了其权益，请提交 issue，将第一时间处理下架。
