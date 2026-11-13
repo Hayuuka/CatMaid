@@ -40,5 +40,10 @@ tasks.processResources {
 
 tasks.shadowJar {
     archiveClassifier.set("")
-    relocate("org.sqlite", "dev.catmaid.libs.sqlite")
+    // P10 冲突修订（api-facts 26.3）：sqlite-jdbc 3.50.3.0 的原生库（Windows/Linux/macOS 的
+    // sqlitejdbc 动态库）在 JNI_OnLoad 里按硬编码的 "org/sqlite/core/NativeDB" 做 RegisterNatives，
+    // 导出表里也只有 Java_org_sqlite_* 符号——relocate 到 dev.catmaid.libs.sqlite 后 native 方法
+    // 全部绑定失败（_open_utf8 UnsatisfiedLinkError，2026-11-13 测试服启动实测 + 纯 JVM 探针复现）。
+    // 因此不再 relocate：Paper 的插件类加载器本身就把各插件的类隔离开了，
+    // 不 relocate 也不会与 Citizens 自带的 sqlite 相互污染。
 }

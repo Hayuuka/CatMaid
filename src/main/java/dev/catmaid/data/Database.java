@@ -18,10 +18,11 @@ public final class Database implements AutoCloseable {
     private final Connection connection;
 
     public Database(File file) throws SQLException {
-        // sqlite-jdbc 被 shade 并 relocate 到 dev.catmaid.libs.sqlite，
-        // 其 META-INF/services 自动注册在重定位后失效，必须显式加载驱动类。
+        // P10 冲突修订：不再 relocate sqlite-jdbc（其原生库按原包名 org/sqlite/core/NativeDB
+        // 动态注册 natives，relocate 后绑定必失败，见 build.gradle.kts 与 api-facts 26.3），
+        // 驱动类回到 org.sqlite.JDBC。显式加载仍保留：避免依赖 DriverManager 的自动扫描。
         try {
-            Class.forName("dev.catmaid.libs.sqlite.JDBC");
+            Class.forName("org.sqlite.JDBC");
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("找不到内置 SQLite 驱动，构建产物可能未正确 shade", e);
         }
