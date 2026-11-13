@@ -19,19 +19,129 @@ ModelAnimator 的 Pose 对齐）；maid.animation.json 里还有 90 多个用不
   * molang 表达式关键帧 → 跳过（不记失败）
   * lerp_mode=catmullrom → 插值 catmullrom，其余 linear
   * loop: true→loop / hold_on_last_frame→hold / 其余→once
-  * 轴向不做翻转（BetterModel 不解析 model_format；四肢方向是否合理
-    要客户端实测，见 docs/api-facts.md 14.5）
+  * 轴向换算（2026-11-13 客户端实测后启用，api-facts 27.4）：rotation 的 x/y 取反、
+    position 的 x 取反、scale 不变（Blockbench compileBedrockKeyframe / TACZ 规则）
+  * sit 落地钳制（2026-11-13，api-facts 27.6）：按腿/脚类骨骼在坐姿下的最低点，
+    若低于地面则整体抬高——TLM 公共坐姿对本插件渲染口径普遍下沉 10~20px
 """
 
 from __future__ import annotations
 
 import json
+import math
+import re
 import shutil
 import sys
 import uuid
 from pathlib import Path
 
 DEFAULT_ANIMS = ("idle", "walk", "run", "sit", "jump", "attacked", "death")
+
+# sit 落地钳制基线（px，负 = 下沉）。foxmaid 是唯一客户端实测坐姿正确的模型，
+# 其链上沉降 Root(-5) + AllBody(-10.5) ≈ -15.5px；其余 TLM 模型的公共坐姿普遍
+# 沉 10~20px（winefox/wedding -24.5，客户端表现为"陷入地里"）。统一钳到本基线。
+SIT_DROP_BASELINE = -16.0
+# 判定"坐姿接触面"的骨骼名（腿/脚/鞋）。排除 band/arm/sleeve/hand——wedding 的
+# legBand* 实际是挂在手臂链上的袖带，名字里带 leg 但与落地无关。
+CORE_BONE = re.compile(r"^(?!.*(?:band|arm|sleeve|hand)).*(?:leg|foot|clog|shoe)", re.I)
+
+
+def _build_hierarchy(data):
+    """uuid → 父 uuid。
+
+    注意 outliner 的 children 里嵌的是 uuid 字符串/子 dict，groups[].children 在
+    Blockbench 5.x 导出里常为空——两条路都要走（漏一层整条链就断）。
+    """
+    groups = {g["uuid"]: g for g in data.get("groups", []) if g.get("uuid")}
+    parent = {}
+
+    def resolve(item, p):
+        u = item if isinstance(item, str) else item.get("uuid")
+        if u in groups:
+            parent[u] = p
+            for c in groups[u].get("children", []):
+                resolve(c, u)
+            if isinstance(item, dict):
+                for c in item.get("children", []):
+                    resolve(c, u)
+
+    for it in data.get("outliner", []):
+        resolve(it, None)
+    for u, g in groups.items():
+        if u not in parent:
+            parent[u] = None
+            for c in g.get("children", []):
+                resolve(c, u)
+    return groups, parent
+
+
+def _pose_last_frame(anim):
+    """每个骨骼通道取 time 最大的关键帧值（坐姿若是动画，取最终停住的姿势）。"""
+    raw = {}
+    for key, an in anim["animators"].items():
+        bone = key[1:] if key.startswith("@") else key
+        for kf in an["keyframes"]:
+            ch = kf["channel"]
+            pt = kf["data_points"][0]
+            cur = raw.setdefault(bone, {})
+            if ch not in cur or kf["time"] >= cur[ch][0]:
+                cur[ch] = (kf["time"], (pt["x"], pt["y"], pt["z"]))
+    return {b: {ch: v[1] for ch, v in chs.items()} for b, chs in raw.items()}
+
+
+def clamp_sit_ground(data, sit_anim):
+    """sit 落地钳制：把主骨骼链上的 position.y 沉降总量钳到 foxmaid 实测基线。
+
+    为什么不做几何包围盒计算：本插件渲染口径与 TLM 的差异没有可靠的解析模型
+    （多轴旋转 + 静止旋转的骨骼，离线正反推各错过一次，见 api-facts 27.6），
+    唯一可信的锚点是 foxmaid——客户端实测坐姿正确。取一条腿骨链上全部
+    position.y 之和作为"沉降量"，超过基线就把最靠根、祖先姿势恒等的
+    position 骨骼抬高差值（对它加 y 是严格的世界 y 平移）。
+    返回日志字符串（无修正时为空）。
+    """
+    groups, parent = _build_hierarchy(data)
+    if not groups or sit_anim.get("name") != "sit":
+        return ""
+    pose = _pose_last_frame(sit_anim)
+    core = [u for u, g in groups.items() if CORE_BONE.search(g.get("name", ""))]
+    if not core:
+        return "，sit落地钳制跳过（没有 leg/foot/clog/shoe 命名的骨骼）"
+
+    chain, u = [], core[0]
+    while u is not None:
+        chain.append(groups[u].get("name", "?"))
+        u = parent.get(u)
+    chain.reverse()  # 根 → 腿
+
+    drop, top, rot_above = 0.0, None, False
+    for name in chain:
+        p = pose.get(name)
+        if not p:
+            continue
+        py = p.get("position")
+        # 候选 = 根侧第一个带 position 的骨骼；它祖先（更靠根）若出现过姿势旋转，
+        # 对它的 y 位移会被旋转带偏，此时放弃候选。
+        if py is not None and top is None and not rot_above:
+            top = name
+        if any(abs(v) > 1e-6 for v in p.get("rotation", (0.0, 0.0, 0.0))):
+            rot_above = True
+        if py:
+            drop += py[1]
+    if top is None or drop >= SIT_DROP_BASELINE - 1e-6:
+        return ""
+    delta = SIT_DROP_BASELINE - drop
+    an = sit_anim["animators"].get("@" + top)
+    if not an:
+        return f"，sit落地钳制跳过（候选骨骼 {top} 不在动画里）"
+    shifted = 0
+    for kf in an["keyframes"]:
+        if kf["channel"] == "position":
+            for pt in kf["data_points"]:
+                pt["y"] += delta
+            shifted += 1
+    return (f"，sit落地钳制 {top}.position.y += {delta:.2f}"
+            f"（链沉降 {drop:.2f} → {SIT_DROP_BASELINE:.2f}px，foxmaid 基线，{shifted}帧）")
+
 
 
 def anim_value(entry):
@@ -181,6 +291,12 @@ def inject(bbmodel_path: Path, anim_dir: Path, wanted: tuple[str, ...], dry: boo
     if not new_anims:
         return f"[skip] {bbmodel_path.name}: 源动画里没有目标动作 {wanted}"
 
+    # sit 落地钳制（在 uuid 替换前做，animators 还带 @骨骼名占位）
+    clamp_note = ""
+    for anim in new_anims:
+        if anim["name"] == "sit":
+            clamp_note = clamp_sit_ground(data, anim)
+
     # 骨骼名 → 真实 uuid；找不到的骨骼整个 animator 丢弃（少动一根，不报错）
     resolved, missing = {}, set()
     for anim in new_anims:
@@ -204,14 +320,15 @@ def inject(bbmodel_path: Path, anim_dir: Path, wanted: tuple[str, ...], dry: boo
 
     detail = ", ".join(f"{a['name']}({len(a['animators'])}骨)" for a in resolved)
     miss = f"，缺骨骼:{sorted(missing)}" if missing else ""
+    suffix = f"{miss}{clamp_note}"
     if dry:
-        return f"[dry] {bbmodel_path.name}: {detail}，跳过molang帧{skipped}{miss}"
+        return f"[dry] {bbmodel_path.name}: {detail}，跳过molang帧{skipped}{suffix}"
 
     backup = bbmodel_path.with_suffix(".bbmodel.orig")
     if not backup.exists():
         shutil.copy2(bbmodel_path, backup)
     bbmodel_path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    return f"[ok] {bbmodel_path.name}: {detail}，跳过molang帧{skipped}{miss}"
+    return f"[ok] {bbmodel_path.name}: {detail}，跳过molang帧{skipped}{suffix}"
 
 
 def main() -> int:

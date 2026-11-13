@@ -2666,3 +2666,19 @@ RCON 实测命令注册与别名移除；其余验收项（客户端观感、10.
 foxmaid 的 sit/idle 是纯静态单帧不受影响；winefox_blue 的 sit 是多帧动画坍缩成乱值（"缩在一起"）。
 修复：每个时间点独立 keyframe、time 写 keyframe 层（与 bbmodel_anim.py 实测可播的结构一致）。
 校验：27/27 重注入、0 悬空、foxmaid walk LeftLeg 25 帧铺满 0→1s。
+
+### 27.6 sit 沉降基线钳制（2026-11-13 16:45）
+
+1. **[实测] wedding/winefox 坐姿陷入地里**：其 sit（公共 maid.animation.json）链沉降
+   Root(-14)+AllBody(-10.5) ≈ -24.5px，比实测正常的 foxmaid（-15.5px）深 9px。
+2. **离线包围盒路线作废**：多轴旋转 + 静止旋转（如 wedding 的 legBand* 实为袖带、挂在
+   手臂链上）使几何正算不可靠——foxmaid 的木屐被算到 -26px（实际 ≈0）。教训同 14.4b：
+   自检数学必须先拿已知正确样本（foxmaid）校准，校准不过就别用。
+3. **采用方案**（agent.md 9 优先级 3，最小改动）：inject_tlm_anims.py 新增
+   clamp_sit_ground——取腿骨链 position.y 总沉降，超过基线 SIT_DROP_BASELINE=-16px
+   （foxmaid 实测值 15.5 + 0.5 容差）就把根侧 position 骨骼（通常 Root）抬高差值。
+   核心骨骼名匹配 leg/foot/clog/shoe 且排除 band/arm/sleeve/hand（wedding 的
+   legBand* 是袖带）。foxmaid 沉降 -15.5 ≥ -16，不受影响。
+4. 27 个模型重注入：19 个被钳制（+2.5 ~ +13.5px 不等），foxmaid 未动。数据面无解的
+   模型（链上无合格 position 骨骼）会打印"跳过"并在日志可见。
+5. 复测重点：wedding/winefox 家族坐姿是否贴地不悬浮；若仍差，调 SIT_DROP_BASELINE。
