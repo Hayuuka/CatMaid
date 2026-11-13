@@ -77,6 +77,11 @@ public final class MaidInteractListener implements Listener {
             store(player, maid, hand);
             return;
         }
+        if (items.isContract(hand)) {
+            // 契约是"对地召唤"的凭证，不是对女仆用的——不说清楚玩家会一直拿它点女仆
+            Messages.send(player, "contract-on-maid");
+            return;
+        }
         if (isFeedable(hand)) {
             // 手上有吃的 → 喂她，不开菜单（蓝图 P4「喂食接线」）
             feed(player, maid, hand);
@@ -90,10 +95,11 @@ public final class MaidInteractListener implements Listener {
     }
 
     /**
-     * 空魂符右键自己的女仆 = 把她收进魂符（蓝图 P9-9.2）。
+     * 空魂符右键自己的女仆 = 把她收进魂符（蓝图 P9-9.2，语义对齐 TLM 的 Soul Spell）。
      *
      * <p>票证语义：手上的空魂符变成"装着她的魂符"，所以是"消耗一张、给一张"而不是凭空生成——
      * 玩家手里的魂符数量守恒，掉落/丢失的后果才说得清（P10-10.4 的凭证据此补发）。
+     * 魂符只管收纳，召唤走女仆契约，两者不再混在同一件物品上（api-facts 25.2）。
      */
     private void store(Player player, Maid maid, ItemStack talisman) {
         if (!maid.isAlive()) {

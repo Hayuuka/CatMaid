@@ -71,6 +71,8 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
 
     /** 魂符自助领取的冷却：玩家 UUID → 可以再领的时间戳（毫秒）。 */
     private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
+    /** 契约的自助领取冷却，与魂符分开记——两种物品用途不同，共用一个冷却会让玩家二选一 */
+    private final Map<UUID, Long> contractReadyAt = new HashMap<>();
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
@@ -100,6 +102,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
             case "rename" -> rename(sender, args);
             case "title" -> title(sender, args);
             case "talisman" -> talisman(sender, args);
+            case "contract" -> contract(sender, args);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
         }
@@ -553,6 +556,47 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter {
                 .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
         talismanReadyAt.put(player.getUniqueId(), now + cooldownMs);
         Messages.send(player, "talisman-received", Map.of("amount", String.valueOf(amount)));
+    }
+
+    /**
+     * 发放女仆契约（召唤凭证）。与 {@link #talisman} 是两套物品：
+     * 魂符负责收纳，契约负责召唤（2026-11-13 按车万女仆语义拆分，见 api-facts 25.2）。
+     */
+    private void contract(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        if (!player.hasPermission("catmaid.use")) {
+            Messages.send(player, "no-permission");
+            return;
+        }
+        if (!plugin.getConfig().getBoolean("interaction.contract-enabled", true)) {
+            Messages.send(player, "contract-disabled");
+            return;
+        }
+        long cooldownMs = Math.max(0,
+                plugin.getConfig().getLong("interaction.contract-cooldown-hours", 24)) * 3600_000L;
+        long now = System.currentTimeMillis();
+        long readyAt = contractReadyAt.getOrDefault(player.getUniqueId(), 0L);
+        if (now < readyAt) {
+            long minutes = Math.max(1, (readyAt - now) / 60_000L);
+            Messages.send(player, "contract-cooldown", Map.of("minutes", String.valueOf(minutes)));
+            return;
+        }
+        int amount = 1;
+        if (args.length >= 2) {
+            try {
+                amount = Math.max(1, Math.min(64, Integer.parseInt(args[1])));
+            } catch (NumberFormatException e) {
+                sendHelp(player);
+                return;
+            }
+        }
+        player.getInventory().addItem(items.contract(amount)).values()
+                .forEach(rest -> player.getWorld().dropItemNaturally(player.getLocation(), rest));
+        contractReadyAt.put(player.getUniqueId(), now + cooldownMs);
+        Messages.send(player, "contract-received", Map.of("amount", String.valueOf(amount)));
     }
 
     private void summon(CommandSender sender, String[] args) {

@@ -84,12 +84,22 @@ ranch:
 
 # 交互
 interaction:
-  # 魂符材质（右键召唤）。必须与 /catmaid talisman 发放的物品一致
+  # ---- 魂符：收纳容器（对齐车万女仆的 Soul Spell）----
+  # 空魂符对着自己的女仆右键 = 把她收进来；装着她的魂符对着空地右键 = 放出来。
+  # 魂符只管收纳，不再召唤——召唤走下面的女仆契约，两件事分开是 TLM 的设计（api-facts 25.2）
   talisman-material: AMETHYST_SHARD
   # 魂符自助领取（/catmaid talisman）：关掉后只能由管理员发放
   talisman-enabled: true
   # 自助领取冷却（小时，0 = 不限）。只记在内存里，重启服务器会清零
   talisman-cooldown-hours: 24
+
+  # ---- 女仆契约：召唤凭证（消耗品，用一张得一只）----
+  # 手持契约对着方块/空气右键 = 召唤一只新女仆并扣 1 张；名额满了不扣
+  contract-material: NAME_TAG
+  contract-enabled: true
+  contract-cooldown-hours: 24
+  # 首次进服自动发一个契约（用 PDC 标记去重，一生只发一次；老玩家升级后会收到一次补偿）
+  grant-contract-on-first-join: true
   # 喂食冷却：同一只女仆两次喂食的最小间隔
   feed-cooldown-seconds: 60
   # 可喂的食物（手持其中之一右键女仆 = 喂食，而不是开菜单）
@@ -186,3 +196,4 @@ dependency:
     # craftengine 模式下要用 CE 物品 ID。CE 侧没有定义这些 ID 时自动回落原版材质并打一条告警
     bell-id: catmaid:bell
     talisman-id: catmaid:talisman
+    contract-id: catmaid:contract

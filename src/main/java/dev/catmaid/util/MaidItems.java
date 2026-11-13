@@ -23,7 +23,12 @@ import java.util.logging.Logger;
 
 /**
  * 女仆相关凭证物品的<b>唯一工厂与识别器</b>（蓝图 P9-9.3）：
- * 铃铛（倒下后的形态）、空魂符（召唤凭证）、装有女仆的魂符（收纳凭证）。
+ * 铃铛（倒下后的形态）、魂符（收纳容器）、女仆契约（召唤凭证）。
+ *
+ * <p><b>魂符与契约是两种物品</b>（2026-11-13 按车万女仆的魂符语义重构，见 api-facts 25.2）：
+ * TLM 的魂符（Soul Spell）只是"存一位女仆的容器"，空置才能存、对着自己的女仆收取、在空地放出，
+ * <b>没有召唤功能</b>；新增女仆走开局赠送/自然生成/祭坛。我们把这两件事拆成：
+ * 魂符 = 收纳/释放（可反复用，数量守恒），契约 = 召唤（消耗品，用一张得一只）。
  *
  * <p>为什么要有"依赖模式"（{@code dependency.provider}）：服主可以在原版物品和 CraftEngine
  * 自定义物品之间二选一——后者外观更好，但需要 CE 侧先定义物品 ID。所有构造/识别都收在这一个类里，
@@ -42,8 +47,10 @@ public final class MaidItems {
 
     /** 铃铛/收纳魂符 → 女仆 UUID（字符串）。 */
     private static final String KEY_MAID_ID = "maid_id";
-    /** 魂符标记位。 */
+    /** 魂符标记位（收纳容器）。 */
     private static final String KEY_TALISMAN = "soul_talisman";
+    /** 女仆契约标记位（召唤凭证）。 */
+    private static final String KEY_CONTRACT = "maid_contract";
 
     private static final String CE_ITEMS_API = "net.momirealms.craftengine.bukkit.api.CraftEngineItems";
 
@@ -52,8 +59,10 @@ public final class MaidItems {
     private final Provider provider;
     private final Material bellMaterial;
     private final Material talismanMaterial;
+    private final Material contractMaterial;
     private final String ceBellId;
     private final String ceTalismanId;
+    private final String ceContractId;
 
     // ---- CraftEngine 反射句柄（它是 paper-plugin，classloader 隔离，只能反射） ----
     private boolean ceTried;
@@ -72,8 +81,12 @@ public final class MaidItems {
         this.talismanMaterial = firstItem(
                 plugin.getConfig().getString("interaction.talisman-material", "AMETHYST_SHARD"),
                 Material.AMETHYST_SHARD);
+        this.contractMaterial = firstItem(
+                plugin.getConfig().getString("interaction.contract-material", "NAME_TAG"),
+                Material.NAME_TAG);
         this.ceBellId = plugin.getConfig().getString("dependency.craftengine.bell-id", "catmaid:bell");
         this.ceTalismanId = plugin.getConfig().getString("dependency.craftengine.talisman-id", "catmaid:talisman");
+        this.ceContractId = plugin.getConfig().getString("dependency.craftengine.contract-id", "catmaid:contract");
     }
 
     public Provider provider() {
@@ -105,7 +118,7 @@ public final class MaidItems {
         return item;
     }
 
-    /** 空魂符（召唤新女仆用）。 */
+    /** 空魂符：收纳容器。对着自己的女仆右键收人，不对着女仆时什么都不做（不召唤）。 */
     public ItemStack talisman() {
         return talisman(1);
     }
@@ -135,6 +148,25 @@ public final class MaidItems {
         meta.getPersistentDataContainer().set(key(KEY_TALISMAN), PersistentDataType.BYTE, (byte) 1);
         item.setItemMeta(meta);
         warnIfLostCeIdentity(item, ceTalismanId);
+        return item;
+    }
+
+    /** 女仆契约：召唤新女仆的凭证。用一张得一只，不能反复用（与魂符的容器语义分开）。 */
+    public ItemStack contract() {
+        return contract(1);
+    }
+
+    public ItemStack contract(int amount) {
+        ItemStack item = base(ceContractId, contractMaterial);
+        item.setAmount(Math.max(1, amount));
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(noItalic(Messages.get("contract-name")));
+        List<Component> lore = new ArrayList<>();
+        Messages.getList("contract-lore").forEach(line -> lore.add(noItalic(line)));
+        meta.lore(lore);
+        meta.getPersistentDataContainer().set(key(KEY_CONTRACT), PersistentDataType.BYTE, (byte) 1);
+        item.setItemMeta(meta);
+        warnIfLostCeIdentity(item, ceContractId);
         return item;
     }
 
@@ -188,6 +220,15 @@ public final class MaidItems {
         }
         PersistentDataContainer pdc = pdc(item);
         return pdc != null && pdc.has(key(KEY_MAID_ID), PersistentDataType.STRING);
+    }
+
+    /** 女仆契约（召唤凭证）。与魂符是两个独立标记位，互不误判。 */
+    public boolean isContract(ItemStack item) {
+        if (item == null || item.getType().isAir()) {
+            return false;
+        }
+        PersistentDataContainer pdc = pdc(item);
+        return pdc != null && pdc.has(key(KEY_CONTRACT), PersistentDataType.BYTE);
     }
 
     /** 铃铛 / 收纳魂符里记的女仆 UUID；不是这两种物品（或数据被改坏）返回 null。 */
@@ -320,8 +361,11 @@ public final class MaidItems {
     public String describe() {
         if (provider == Provider.CRAFTENGINE) {
             return "provider=craftengine（铃铛 " + ceBellId + "，魂符 " + ceTalismanId
-                    + "；CE 缺失时回落 " + bellMaterial.name() + " / " + talismanMaterial.name() + "）";
+                    + "，契约 " + ceContractId + "；CE 缺失时回落 "
+                    + bellMaterial.name() + " / " + talismanMaterial.name() + " / "
+                    + contractMaterial.name() + "）";
         }
-        return "provider=vanilla（铃铛 " + bellMaterial.name() + "，魂符 " + talismanMaterial.name() + "）";
+        return "provider=vanilla（铃铛 " + bellMaterial.name() + "，魂符 " + talismanMaterial.name()
+                + "，契约 " + contractMaterial.name() + "）";
     }
 }
