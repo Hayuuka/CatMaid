@@ -2,10 +2,15 @@
 # 属于部署资产，按 docs/api-facts.md 8.4 不入库，环境可按 8.1 重建
 testserver/
 
-# 模型资产与资源包产物（部署资产，TLM 美术资源为 CC BY-NC-SA 4.0，不入库）
-*.bbmodel
-model_src/
+# 资源包产物不入库（BetterModel 每次启动重建，tools/pack_host.py 负责同步）
 plugins/BetterModel/build*.zip
+
+# 模型资产：2026-11-13 服主裁决，成品 bbmodel 入库（内嵌贴图+注入动画，27 个共约 26MB）
+# TLM 美术资源为 CC BY-NC-SA 4.0：仅限非商用，须署名 TartaricAcid 与车万女仆项目
+# 转换源（TLM animation json / png）与 .orig/.bak 备份仍不入库
+model_src/**
+!model_src/**/
+!model_src/**/*.bbmodel
 
 # Gradle / 构建产物
 .gradle/
