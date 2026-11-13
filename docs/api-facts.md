@@ -2,7 +2,7 @@
 
 > 本文件是 Phase 0「依赖打通验证」的交付物。后续阶段写代码前必须先读本文件。
 > 标记约定：**[JAR]** = 从依赖 jar 用 `javap` 反编译确认；**[实测]** = 在本地 Paper 26.2 测试服实跑确认；**[待实测]** = 需要真实客户端人工验证。
-> 最后更新：2026-11-12（P7 收口：第 21 节含服务端实测、客户端验收记录、验收环境固化与 P8 交接）
+> 最后更新：2026-11-13（P10：第 26 节含 sqlite relocate 冲突、命令修复验收与部署注意；第 4.0 节资源包走原版裁决）
 
 **Phase 0 状态：已完成**（客户端实机验收通过）。
 **Phase 1 状态：已完成并收口**（服务端 6 项验收通过、模型外观客户端确认，详见第 11、15 节）。
@@ -2532,3 +2532,75 @@ public enum Type { INIT, EMPTY, HAS_MAID }
    （开启 / 24 小时 / 首次赠送开启）。
 4. **落点比之前宽松**：现在允许水面、允许脚下没有支撑（TLM 同款）。想收紧就改
    `TalismanListener#canPlaceMaidAt`，但别再引入"必须站在实心方块上"的限制——会把台阶边也挡掉。
+
+## 26. Phase 10 交接（修复轮：命令前缀 / 多女仆定向 / 原版资源包 / 铃铛绑定，2026-11-13）
+
+### 26.1 阶段结论
+
+四个修复项全部落码（10.1 `cabc44b`、10.2 `5039601`、10.3 `299fbe6`、10.4 `1421a9c`），
+外加一个启动期关键修复（sqlite relocate，`795ffc5`，见 26.3）。服务端启动验证 0 ERROR，
+RCON 实测命令注册与别名移除；其余验收项（客户端观感、10.5 回归）**待真人客户端**。
+
+### 26.2 新增 / 改动文件
+
+| 提交 | 文件 | 内容 |
+|---|---|---|
+| cabc44b | `plugin.yml` | 删除 aliases，唯一入口 `/catmaid` |
+| 5039601 | `CatMaidCommand.java`、`messages.yml` | `resolveMaid(Player, String)` 名字/就近双策略、`optionalArg`、rename 撞名拒绝、tab 补全女仆名、`info-target-hint` |
+| 299fbe6 | `docs/api-facts.md`、testserver | 资源包走原版单包裁决：CE 从 `testserver/plugins/` 移至 `plugins-disabled/`；4.0 记录部署事实 |
+| 1421a9c | `CatMaidCommand`、`CatMaidPlugin`、`Database`、`MaidRepository`、`Maid`、`MaidDamageListener`、`config.yml`、`messages.yml` | `/catmaid bell [名字]`（收 revive-cost 同额材料；`death.bell-expire-days` 过期免费）、`/catmaid release [名字]`（聊天栏 30s 内再输一次名字二次确认）；`death_at` 列幂等迁移 |
+| 795ffc5 | `build.gradle.kts`、`Database.java` | **去掉 sqlite-jdbc relocate**（见 26.3），驱动类回到 `org.sqlite.JDBC` |
+
+### 26.3 [CONFLICT] 重大冲突：sqlite-jdbc 的 shade relocate 会破坏原生库绑定
+
+```
+[CONFLICT] 蓝图位置: agent.md 2.1 / blueprint 0.4（"sqlite-jdbc 须 relocate 到 dev.catmaid.libs.sqlite"）
+现实情况: sqlite-jdbc 3.50.3.0 的原生库（Windows/Linux/macOS 的 sqlitejdbc 动态库）在加载时按
+          硬编码类名 "org/sqlite/core/NativeDB" 动态注册 natives，且导出表只有 Java_org_sqlite_*
+          符号（DLL 内 Java_dev_catmaid_* 计数为 0，已用二进制检查确认）。relocate 后：
+          纯 JVM 探针 = NoClassDefFoundError: org/sqlite/core/NativeDB；
+          测试服启动 = dev.catmaid.libs.sqlite.core.NativeDB._open_utf8 UnsatisfiedLinkError，
+          插件自禁用（2026-11-13 实测）。此前 P1–P9 能跑是 classloader 全局共享让别的插件的
+          org.sqlite 类"顶包"成功的巧合，今天环境一变即失效。
+采用方案: 去掉 relocate（build.gradle.kts 注释 + Database.java 驱动类同步改回 org.sqlite.JDBC）。
+理由: 最小改动保守实现——Paper 的插件类加载器本身就把各插件的类隔离了，不 relocate 不会与
+      Citizens 自带的 sqlite 相互污染；relocate 在这个依赖上是原理性不可行，没有任何
+      "保留 relocate + 补丁"的低成本做法（改 DLL 导出表/类名串都需重建 PE 结构）。
+```
+
+**教训**：对带原生库的依赖（sqlite-jdbc、SQLite natives、任何 JNI 绑定）做 shade relocate
+前必须先用最小探针验证 native 加载，不能只看 Java 编译/启动。
+
+### 26.4 与蓝图的有意差异
+
+1. **`death.bell-expire-days` 的"免材料补发一次"口径**：实现为"倒下超过 N 天后，补发不收材料"
+   （每次过期补发都免费）。蓝图原文"免费补发一次"若按"只有第一次免费"理解需要额外的"已免过"标记
+   位，为默认关闭的可选增强不值得加状态——按保守口径实现，想收紧再改 `CatMaidCommand#bellExpired`。
+2. **`/catmaid release` 与 P9 魂符释放的文案键**：魂符释放已占用 `release-*` 键（TalismanListener），
+   命令"送走"用 `sendaway-*` 前缀，避免共用一个键改文案时互相牵连。
+3. **release 的目标解析**：不带名字时沿用"就近/唯一"策略（任何状态都可被选中送走），带名字走 10.2 的
+   按名定向；蓝图写 `<名字>`，实现为 `[名字]`（单人时少打一个参数）。
+4. **bell 的默认目标**：不带名字时只在铃铛态女仆里解析（就近策略对没有实体的她无意义），多于一只
+   必须指定名字。
+
+### 26.5 验收结果（服务端实测 2026-11-13 12:55）
+
+- [x] 测试服启动 0 ERROR：CatMaid 正常 enable、载入 2 只女仆、收纳态残留实体正常收起
+      （修复 relocate 后，日志 p10-boot.log）
+- [x] `death_at` 列幂等迁移落库：`PRAGMA table_info(maids)` 含 `death_at`，存量 2 只数据完好
+- [x] `/maid` 从控制台执行 = Unknown command（10.1）；`/catmaid admin list` 正常
+- [x] messages.yml 删除重建后 `bell` / `release` 帮助行出现（23.3-2 的升级姿势照跑了一遍）
+- [x] `gradlew shadowJar` 通过，产物部署 `testserver/plugins/CatMaid-0.1.0.jar`
+- [ ] **待客户端**：`/catmaid:xxx` 前缀入口消失、双女仆按名定向 + tab 补全、rename 撞名拒绝、
+      进服只弹一次资源包下载、全灭丢铃铛补发闭环、release 聊天确认流、P8 挂起项（10.5）
+
+### 26.6 部署注意
+
+1. **生产服升级到 P10 前先删一次 `plugins/CatMaid/messages.yml`**（23.3-2）：否则帮助文案停留在
+   旧命令表，且 10.4 的 bell/release 提示键不会生效（新键会补、`help` 列表键不会更新）。
+2. **`dependency.provider` 保持 `vanilla`**；资源包链路只有原版 `server.properties` 一个下发源，
+   若服务器另有 CE 内容且要保留 CE，两次下载依旧（api-facts 4.0 的取舍）。
+3. **`testserver/plugins-disabled/` 是 CE 的可逆备份**，不要当成垃圾清掉；要回 CE 路线直接移回 plugins。
+4. sqlite 不再 relocate 后，**其他插件若也 shade 了 org.sqlite 且共享类加载空间，可能出现同名类**——
+   Paper 的隔离机制下不会发生；若将来引入把库装进全局 classpath 的加载器（如各类 libby 动态装载），
+   需重新评估（26.3 的探针手法直接可用）。

@@ -84,7 +84,7 @@ tasks.processResources {
 
 tasks.shadowJar {
     archiveClassifier.set("")
-    relocate("org.sqlite", "dev.catmaid.libs.sqlite")
+    relocate("org.sqlite", "dev.catmaid.libs.sqlite")  // ⚠ P10 已修订：不 relocate（api-facts 26.3，relocate 破坏原生库绑定）
 }
 ```
 
@@ -1214,11 +1214,24 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
 ### 验收清单（Phase 10）
 > 验收前置（同 Phase 4 注）：无玩家在线时 NPC 是 `spawned=false`——自动化验证前先 `/npc spawn <id>`；观感类验收需真人客户端。
 
-- [ ] 命令唯一入口 `/catmaid`，别名与 `/catmaid:xxx` 命名空间前缀全部失效
+- [x] 命令唯一入口 `/catmaid`，别名与 `/catmaid:xxx` 命名空间前缀全部失效
+      （2026-11-13 服务端实测：`/maid` = Unknown command；`/catmaid:xxx` 的失效待客户端确认）
 - [ ] 双女仆：按名字定向 gui / mode / sethome / rename；info 列表可作选择参考；rename 撞名被拒
+      （代码完成于 5039601，待客户端实测）
 - [ ] 两种 provider 下进服均只下载一次资源包
+      （裁决走 vanilla 单包：CE 已从测试服移除（备份在 `testserver/plugins-disabled/`），
+      待客户端进服复核；CE 合并路线不再采用，见 api-facts 4.0/4.3）
 - [ ] 全灭 + 丢铃铛场景：补发 → 复活；release → 名额释放
+      （代码完成于 1421a9c，待客户端实测）
 - [ ] P8 挂起项（全链路 / 60 只 TPS / 玩家侧命令 happy path）回归通过
+      （**待实测**，流程照 docs/api-facts.md 23.5.1；另见 26.5 待客户端清单）
+
+### 10.4 附带修复（2026-11-13 启动实测发现）
+
+- **sqlite-jdbc 的 shade relocate 会破坏原生库绑定**：DLL 按硬编码的 `org/sqlite/core/NativeDB`
+  动态注册 natives、导出表只有 `Java_org_sqlite_*`，relocate 后 `_open_utf8` UnsatisfiedLinkError、
+  插件自禁用（此前能跑是别的插件的 org.sqlite 类"顶包"的巧合）。已去掉 relocate
+  （`795ffc5`），agent.md 2.1 的 relocate 要求按冲突协议作废，详见 api-facts 26.3。
 
 ---
 
@@ -1253,6 +1266,7 @@ provider=vanilla：BM 包走原版槽位；CE 若仅为 CatMaid 而装可整体�
 | CraftEngine 物品构造/识别 API 与预期不符（P9 provider=craftengine 的前提） | **事实**[JAR 已核，CE 26.9.2]：`CraftEngineItems.byId(String)` → `BukkitItemDefinition#buildBukkitItem()`；识别 `getCustomItemId(stack).toString()`（`ns:值`）。CE 同时带 plugin.yml 与 paper-plugin.yml → classloader 隔离，必须反射。**采用方案**（P9 已落码 `util/MaidItems`）：按核对签名实现 + 运行时自检；CE 缺物品 ID 就回落原版材质并告警。**物品互认兜底**：身份只认 `catmaid:maid_id` / `catmaid:soul_talisman` 两个 PDC 键，与材质/CE ID 无关，切 provider 旧物品不作废。**未实测**：CE 构造路径（测试服 CE 无任何物品定义，api-facts 24.3-6） |
 | CE 合并 BM 包后模型/物品渲染异常（P10-10.3） | [待验证] P0 最终定案走双包分离、方案 A（merge-external-zip-files）无通过记录；合并前先在测试服验证。降级：退回双包分离（代价：进服两次下载），结论记录回 api-facts |
 | 铃铛丢失导致女仆永久占位、玩家被上限锁死 | **事实**[已定位]：全灭 + 铃铛丢失时 maid 永远 alive=0 且占 `max-per-player` 名额。**采用方案**（P10-10.4）：DB 为绑定事实来源、物品只是凭证——`/catmaid bell` 补发（收同额复活材料）+ `/catmaid release` 自助送走（二次确认）；上限口径不变但出口常开 |
+| 对带原生库的依赖做 shade relocate | **事实**[2026-11-13 实测]：sqlite-jdbc 3.50.3.0 的动态库按硬编码 `org/sqlite/core/NativeDB` 注册 natives，导出表只有 `Java_org_sqlite_*`——relocate 到 `dev.catmaid.libs.sqlite` 后所有 native 方法绑定失败（插件自禁用）。**采用方案**（P10）：不 relocate（Paper 类加载器已隔离各插件），详见 api-facts 26.3。**通用教训**：shading 任何带 JNI 绑定的依赖前，先写最小探针验证 native 加载 |
 
 ## 附录 B — 阶段依赖关系
 
