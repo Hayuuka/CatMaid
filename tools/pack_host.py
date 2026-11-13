@@ -31,7 +31,11 @@ PORT = 8123
 
 
 def latest_build() -> Path:
-    """按编号（不是字符串）取最大的 build<N>.zip，避免 build10 排在 build9 前面。"""
+    """取最新的资源包：编号最大的 build<N>.zip，或更新时间更新的裸名 build.zip。
+
+    2026-11-13 修订：BetterModel 3.6.0 每次启动只重写裸名 build.zip（编号只增不减是
+    3.7.0 的行为），所以裸名文件比最大编号还要新时以它为准，否则 sync 会拿到旧包。
+    """
     candidates = []
     for path in BM_DIR.glob("build*.zip"):
         digits = re.fullmatch(r"build(\d+)\.zip", path.name)
@@ -39,7 +43,11 @@ def latest_build() -> Path:
             candidates.append((int(digits.group(1)), path))
     if not candidates:
         raise SystemExit(f"[pack] {BM_DIR} 下没有 build<N>.zip，先启动一次服务器让 BetterModel 生成资源包")
-    return max(candidates)[1]
+    numbered = max(candidates)[1]
+    bare = BM_DIR / "build.zip"
+    if bare.is_file() and bare.stat().st_mtime > numbered.stat().st_mtime:
+        return bare
+    return numbered
 
 
 def sha1_of(path: Path) -> str:

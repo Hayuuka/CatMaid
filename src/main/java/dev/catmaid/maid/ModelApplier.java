@@ -71,6 +71,13 @@ public final class ModelApplier {
                 logger.warning("ModelTrait 上找不到 setRenderer 方法，BetterModel 版本可能已变");
                 return false;
             }
+            if (renderer != null) {
+                // BetterModel 的 ModelTrait.setRenderer 在"新渲染器非空"分支不关闭旧 tracker
+                // （字节码确认，api-facts 27.4）：A→B 直接切换会残留 A 的全部部件，客户端表现为
+                // 多个模型叠加。setRenderer(null) 分支才会走 registryOrNull(uuid).close()，
+                // 所以先清旧再挂新；首次挂载时 registry 尚不存在，该分支为空操作，无害。
+                setRenderer.invoke(trait, new Object[]{null});
+            }
             setRenderer.invoke(trait, renderer);
             return renderer != null;
         } catch (ReflectiveOperationException | LinkageError e) {

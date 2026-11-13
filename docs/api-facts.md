@@ -2610,3 +2610,59 @@ RCON 实测命令注册与别名移除；其余验收项（客户端观感、10.
 4. sqlite 不再 relocate 后，**其他插件若也 shade 了 org.sqlite 且共享类加载空间，可能出现同名类**——
    Paper 的隔离机制下不会发生；若将来引入把库装进全局 classpath 的加载器（如各类 libby 动态装载），
    需重新评估（26.3 的探针手法直接可用）。
+
+## 27. 27 个手工转换模型批量启用（2026-11-13）
+
+### 27.1 控制台/RCON 不能挂模型（重要，别再试）
+
+1. **RCON 下 `npc create` 必 NPE**：Citizens 创建后要在"发送者位置"生成实体（`NPCCommands.lambda$create$1`），
+   RCON 发送者无位置 → `Cannot invoke "Location.getChunk()" because "loc" is null`，NPC 创建即作废
+   （日志 6 条 Task 异常）。带 `--at` 也只创建了空壳（未生成、无 location/model trait）。
+2. **RCON 下 `npc select` + `npc model` 组合不可用**：选中状态按 CommandSender 对象存储，
+   Paper 给每条 RCON 命令新建 sender 对象，同一连接内跨命令即丢 → `/npc model` 必报"必须选择一个NPC"。
+3. 结论：**挂模型的唯一可靠途径是游戏内操作**（或先核实 `bm spawn` 的位置参数格式——cloud LocationParser，
+   本次未核实完，试错式传参全被拒）。
+4. Phase 0 的测试 NPC（测试/模型测试/骑士）当时是在游戏内创建与 select 的，文档此前未记录这个前提。
+
+### 27.2 BetterModel 3.6.0 的资源包产物是裸名 build.zip
+
+启动时重写裸名 `build.zip`（3.7.0 才是编号递增 build<N>.zip，目录里 build2~8 是历史遗留）。
+`tools/pack_host.py` 的 `latest_build()` 原来只认编号、会错拿旧 build8，已补丁：
+裸名比最大编号新时取裸名。sync 后 sha1 写回 server.properties，**仍需重启服务端才对客户端生效**
+（server.properties 不热重载，8.3 的规矩）。
+
+### 27.3 本轮部署与验证记录
+
+1. `model_src/` 27 个 bbmodel（含注入动画）已复制到 `plugins/BetterModel/models/`；
+   winefox_blue 目录内的文件名为 winefox.bbmodel，部署时已改名 `winefox_blue.bbmodel` 防重名。
+2. config.yml `models` 名单扩为 27 个（GUI 模型选择分页读取此名单，重启生效）；
+   `max-per-player` 2 → 20（服主要求）。
+3. 启动验证：两次启动日志均无 `Unable to load this model`，27/27 模型解析通过；
+   新 catmaid-pack.zip 8.17MB/18157 项，sha1 `16d3662b...`，HTTP 8123 可下载。
+4. **待客户端实测**：贴图正确性、挂实体、动画观感（重点：四肢摆动方向，注入报告 §7-A 的轴向假设）。
+5. 清理：误创建的空壳 NPC 87（mt_foxmaid）已 `npc remove 87` 永久删除；原有女仆（85 小铃/86 汐音）未动。
+
+### 27.4 首轮客户端实测反馈与修复（2026-11-13 15:57–16:07）
+
+1. **[实测] 三个症状**：坐姿扭成一团、走路单腿平移、切换模型后多模型叠加。
+2. **轴向翻转已启用**（14.5 预判命中）：`inject_tlm_anims.py` 新增 `convert_axis()`——
+   rotation x/y 取反、position x 取反、scale 不变（TACZ 规则）。27/27 重注入，静态校验 0 悬空。
+   静态姿势（idle/sit）同样受此规则约束，观感待复测。
+3. **[字节码] ModelTrait.setRenderer 切换泄漏**：新渲染器非空分支直接 `ModelRenderer.create()`
+   而**不调用** `registryOrNull(uuid).close()`（close 只在渲染器为 null 分支）；
+   `ModelRenderer.create()` 内部也不清理 → A→B 切换残留 A 的全部部件（客户端看到模型叠加）。
+   **CatMaid 修复**（ModelApplier.apply）：挂新模型前先 `setRenderer(null)` 走 close 分支。
+   首次挂载时 registry 不存在，该调用为空操作，无害。
+4. **[事实] 动画不进资源包**：BetterModel 服务端驱动骨骼变换（显示实体 metadata），
+   bbmodel 动画改动不改变 build.zip 内容与 sha1——改动画只需重启服务端，客户端无需重下包。
+5. 修复后重启验证：日志干净，CatMaid 0.1.0 正常加载。
+
+### 27.5 动画"冻结在第 0 帧"的真正根因（2026-11-13 16:15）
+
+27.4 的轴向翻转方向是对的（伸右腿变伸左腿），但动画仍在第 0 帧。复查注入器发现结构性 bug：
+`inject_tlm_anims.py` 把一个通道的**全部时间点塞进同一个 keyframe**（keyframe 层 `"time": 0` 写死），
+而 BetterModel 的 `ModelDatapoint` record **没有 time 字段**（数据点内的 time 被忽略）→
+整条动画坍缩成 t=0 单帧。完美解释全部现象：翻转前 t=0 右腿在前、翻转后左腿在前；
+foxmaid 的 sit/idle 是纯静态单帧不受影响；winefox_blue 的 sit 是多帧动画坍缩成乱值（"缩在一起"）。
+修复：每个时间点独立 keyframe、time 写 keyframe 层（与 bbmodel_anim.py 实测可播的结构一致）。
+校验：27/27 重注入、0 悬空、foxmaid walk LeftLeg 25 帧铺满 0→1s。
