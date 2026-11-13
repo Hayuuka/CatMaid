@@ -2399,8 +2399,8 @@ cd testserver/plugins/BetterModel && python -m http.server 8123 --bind 0.0.0.0 -
 
 ## 25. 魂符：按车万女仆的 ItemSmartSlab 做成三态（2026-11-13）
 
-> **收口状态：代码完成 + 服务端启动零异常；右键链路待真人客户端验证。**
-> 提交：`ad1dec9`（三态重构）、`dbf1475`（删手部物品显示）。
+> **收口状态：完成（2026-11-13）。服务端启动 0 异常，客户端链路由服主实测通过。**
+> 提交：`ad1dec9`（三态重构）、`41efb50`（文档）、`dbf1475`（删手部物品显示）。
 
 ### 25.1 起因
 
@@ -2500,7 +2500,12 @@ public enum Type { INIT, EMPTY, HAS_MAID }
 | 启动无异常 | ✅ | `凭证物品 provider=vanilla（铃铛 BELL，魂符 AMETHYST_SHARD）`；`ERROR/SEVERE/Exception` 0 |
 | 命令注册 | ✅ | 控制台 `catmaid soul` → 「该命令只能由玩家执行」；`catmaid contract` 已无输出（子命令已删） |
 | 文案合并 | ✅ | 删测试服 `messages.yml` 后重启，`init-talisman-name` / `soul-received` / `place-only-on-top` 全部自动补入 |
-| 三态迁移 / 落点 / 冷却 | ⚠ 待客户端 | 无玩家在线时无法触发右键链路；服务端只验到启动与命令 |
+| 未唤醒魂符召唤 | ✅ 客户端 | 服主实测：`/catmaid soul` 领符 → 对地右键召出女仆，手里变回空魂符 |
+| 收纳（空 → 装着） | ✅ 客户端 | `/catmaid admin list` 出现「魂符中」状态；DB `stored=1` |
+| 三态串联（召唤→收纳→放出） | ✅ 客户端 | 服主 2026-11-13 12:18 确认通过；同一张符数量不变 |
+| 落点校验 / 冷却 / 台词 | ✅ 客户端 | 服主确认通过（未逐项留证） |
+| provider=craftengine 全链路 | ⚠ 未测 | CE 无 catmaid 物品定义，仍是"JAR 已核、未实测"（24.3-6） |
+| 死亡铃铛态收纳被拒 | ⚠ 未测 | 铃铛态无实体，正常路径点不到（24.5 同款限制） |
 
 ### 25.7 部署注意
 
