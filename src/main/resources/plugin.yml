@@ -9,7 +9,9 @@ softdepend: [Citizens, BetterModel, CraftEngine]
 commands:
   catmaid:
     description: 猫娘女仆主命令
-    aliases: [maid, 猫娘]
+    # P10-10.1：不设 aliases。Bukkit 会把别名注册成独立标签，进而派生出
+    # /catmaid:女仆 这类带命名空间前缀的入口，玩家会看到好几套命令，帮助里也容易漏写。
+    # 唯一入口就是 /catmaid。
 permissions:
   catmaid.use:
     description: 普通玩家权限（召唤/管理自己的女仆）
