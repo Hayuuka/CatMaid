@@ -2779,3 +2779,14 @@ kr.toxicity.model.api.nms.ModelDisplay extends kr.toxicity.model.api.nms.Identif
   packet 通路无效，需要回填事实。
 - relog 后偏好保持（player_prefs 落库、进服即看不见）。
 - 30+ 女仆同屏 opt-out 玩家端性能（hide 后 BM 不再对其下发逐帧包）。
+
+### 28.4 P11 实测收口（2026-11-14，单机 A + 双客户端 B）
+
+1. **[实测通过]** 第 1/2/4 组：A hide 后骨骼+名牌+底层实体全消失（含 BM 的
+   player-hide-delay 之外的底层实体，hideEntity 对 NPC 玩家型实体有效——11.0-5 疑问
+   就此收口）、再输一次恢复、B 客户端零影响、换模型不漏 spawn。
+2. **[实测失败→已修]** relog 保持：首版 quit 时不清对账集，重进后 applyAllFor 因
+   "实体已在账"跳过 hideEntity，而 Paper 的 hideEntity 状态随连接销毁 → 隐藏失效。
+   修复：`PlayerQuitEvent` 里 `MaidVisibilityManager#handleQuit` 清空该玩家全部对账
+   记录，重进后全量重新施加。**通用教训：对账集的生命周期不能超过它所镜像的连接态。**
+3. 区块重载 respawn（只触发 MaidTrait#onSpawn）与 30+ 女仆性能项仍待复测。

@@ -94,5 +94,7 @@ public final class PlayerConnectionListener implements Listener {
         for (Maid maid : maidManager.byOwner(event.getPlayer().getUniqueId())) {
             maidManager.saveAsync(maid);
         }
+        // P11：hideEntity 随连接销毁，对账集必须同步清，否则重进后"已在账"跳过重新施加
+        visibility.handleQuit(event.getPlayer());
     }
 }

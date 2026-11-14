@@ -198,6 +198,20 @@ public final class MaidVisibilityManager {
         }
     }
 
+    /**
+     * 玩家退出时清空其全部对账记录（P11 实测修复，2026-11-14）。
+     *
+     * <p>hideEntity 状态随连接销毁，但对账集是服务端内存、会跨 relog 存活——若不清，
+     * 重进后 applyAllFor 会因"实体已在账"跳过 hideEntity，导致隐藏失效。
+     */
+    public void handleQuit(Player player) {
+        UUID playerId = player.getUniqueId();
+        for (Map<UUID, Set<UUID>> perMaid : ledger.values()) {
+            perMaid.remove(playerId);
+        }
+        ledger.values().removeIf(Map::isEmpty);
+    }
+
     // ---- 内部 ----
 
     /**
