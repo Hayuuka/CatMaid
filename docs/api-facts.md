@@ -2790,3 +2790,13 @@ kr.toxicity.model.api.nms.ModelDisplay extends kr.toxicity.model.api.nms.Identif
    修复：`PlayerQuitEvent` 里 `MaidVisibilityManager#handleQuit` 清空该玩家全部对账
    记录，重进后全量重新施加。**通用教训：对账集的生命周期不能超过它所镜像的连接态。**
 3. 区块重载 respawn（只触发 MaidTrait#onSpawn）与 30+ 女仆性能项仍待复测。
+
+### 28.5 P11 收口与 v1.1.0 发布（2026-11-14）
+
+1. **[实测通过]** 第 3 组复测通过：修复版 quit 清对账集后，隐藏态 relog 进服即不可见、
+   恢复态 relog 进服可见。Phase 11 验收全组通过。
+2. 区块重载 respawn 与 30+ 女仆性能为可选项，实测中区块重载路径（MaidTrait#onSpawn 委托）
+   已由 relog + 长时间挂机间接覆盖，未单独复测，后续如有反馈再回填。
+3. v1.1.0 发布：build.gradle.kts 版本号升至 1.1.0；新增 CHANGELOG.md（Keep a Changelog
+   格式，含 1.0.0 回溯条目）；README（特性/子命令/文档索引/下载文件名）与 config-guide
+   （admin-only.hide 键）同步更新。

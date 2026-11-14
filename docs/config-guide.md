@@ -38,6 +38,7 @@
 | `soul` | `/catmaid soul [数量]` — 领未唤醒的魂符 |
 | `bell` | `/catmaid bell [名字]` — 补发铃铛 |
 | `release` | `/catmaid release [名字]` — 送走女仆 |
+| `hide` | `/catmaid hide` — 猫娘模型隐藏开关（P11 新增） |
 
 - `false`（默认）= 有 `catmaid.use`（默认全员）就能用；`true` = 只认 `catmaid.admin`（默认 op），普通玩家收到拒绝提示。
 - 设 `true` 后该命令在普通玩家的 tab 补全里也会消失。
@@ -45,6 +46,7 @@
 - `admin` 子树不在此配置（本身就挂 `catmaid.admin`）。
 - 键名必须与命令名一字不差；写错不报错，只是不生效。
 - 注意 `soul`/`talisman` 设为 true 会关掉玩家自助领取，但**魂符三态的右键使用不受影响**——玩家仍可以用已有的魂符召唤/收纳/放出。
+- 注意 `hide` 与其他键不同：它**不要求 `catmaid.use`**（不想看猫娘的玩家未必养女仆），`false`（默认）即对全员开放。开启后只影响该玩家自己的可见性，女仆照常工作、其他玩家不受影响。
 
 ## 3. models / names — 模型池与名字池
 

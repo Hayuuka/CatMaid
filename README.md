@@ -11,6 +11,7 @@
 - **死亡与复活**：倒下变铃铛，凭材料唤醒；铃铛丢了可补发
 - **魂符三态**：对齐车万女仆——未唤醒（召唤）/ 空（收纳）/ 装着（放出），一张符走完全流程
 - **多女仆**：每玩家可养多只，命令按名字定向
+- **猫娘隐藏**：`/catmaid hide` 一键对所有猫娘模型隐身（含自己的），不影响其他玩家与女仆工作
 - **零网络、零经济依赖**：只依赖 Citizens2 + BetterModel，CraftEngine 可选
 
 ## 环境要求
@@ -27,7 +28,7 @@
 
 **方法一：**
 
-1. 下载 Release 中的 `CatMaid-1.0.0.jar`（插件）与 `CatMaid-Models-1.0.0.zip`（模型包，含授权文件）
+1. 下载 Release 中的 `CatMaid-1.1.0.jar`（插件）与 `CatMaid-Models-1.1.0.zip`（模型包，含授权文件）
 2. 安装依赖插件并核对版本：
    - **Citizens2 2.0.44-SNAPSHOT (build 4269)**：官方 Jenkins 发布页
    - **BetterModel 3.6.0**：官方发布页（Modrinth / GitHub Releases）
@@ -48,7 +49,7 @@
 
 ## 命令与权限
 
-唯一入口 `/catmaid`（子命令：`gui / mode / sethome / info / rename / title / talisman / soul / bell / release / admin`）。
+唯一入口 `/catmaid`（子命令：`gui / mode / sethome / info / rename / title / talisman / soul / bell / release / hide / admin`）。
 
 | 权限 | 默认 | 说明 |
 |---|---|---|
@@ -75,9 +76,10 @@
 
 | 文档 | 内容 |
 |---|---|
-| `blueprint.md` | 设计与验收的唯一事实来源，按 Phase 0–10 推进 |
+| `blueprint.md` | 设计与验收的唯一事实来源，按 Phase 0–11 推进 |
 | `docs/api-facts.md` | Citizens / BetterModel / Paper 的实测 API 事实、每阶段交接与冲突记录 |
 | `docs/config-guide.md` | config.yml 逐键详解与升级速查 |
+| `CHANGELOG.md` | 版本更新日志（Keep a Changelog 格式） |
 | `agent.md` | 参与开发的 AI 编码行为约束 |
 
 ## 许可
