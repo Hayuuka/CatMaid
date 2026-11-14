@@ -39,6 +39,7 @@ public final class MaidManager {
     private final ModelApplier modelApplier;
     private final BehaviorManager behavior;
     private final DialogueManager dialogue;
+    private final MaidVisibilityManager visibility;
     private final FileConfiguration config;
     private final Logger logger;
 
@@ -48,12 +49,14 @@ public final class MaidManager {
 
     public MaidManager(MaidRepository repository, ModelRegistry models, ModelApplier modelApplier,
                        BehaviorManager behavior, DialogueManager dialogue,
+                       MaidVisibilityManager visibility,
                        FileConfiguration config, Logger logger) {
         this.repository = repository;
         this.models = models;
         this.modelApplier = modelApplier;
         this.behavior = behavior;
         this.dialogue = dialogue;
+        this.visibility = visibility;
         this.config = config;
         this.logger = logger;
     }
@@ -80,6 +83,10 @@ public final class MaidManager {
      */
     public void onEntityReady(Maid maid) {
         maid.applyVitals();
+        // P11：新实体产生处要重新施加 hide（blueprint 11.2）——恢复/召唤/上线补挂/复活
+        // 四条路径都过这里，MaidTrait#onSpawn 也委托到本方法，换模型走 GuiManager 的
+        // onEntityReady 补挂，挂点遗漏由可见性管理器的 sweep 对账兜底
+        visibility.hideMaidFromOptedOut(maid);
     }
 
     /**

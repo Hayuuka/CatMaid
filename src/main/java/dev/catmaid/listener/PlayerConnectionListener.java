@@ -3,6 +3,7 @@ package dev.catmaid.listener;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
+import dev.catmaid.maid.MaidVisibilityManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.npc.NPC;
@@ -30,11 +31,14 @@ public final class PlayerConnectionListener implements Listener {
     private final Plugin plugin;
     private final MaidManager maidManager;
     private final MaidItems items;
+    private final MaidVisibilityManager visibility;
 
-    public PlayerConnectionListener(Plugin plugin, MaidManager maidManager, MaidItems items) {
+    public PlayerConnectionListener(Plugin plugin, MaidManager maidManager, MaidItems items,
+                                    MaidVisibilityManager visibility) {
         this.plugin = plugin;
         this.maidManager = maidManager;
         this.items = items;
+        this.visibility = visibility;
     }
 
     @EventHandler
@@ -55,6 +59,10 @@ public final class PlayerConnectionListener implements Listener {
             npc.getOrAddTrait(MaidTrait.class).bind(maid);
             npc.spawn(target);
             maidManager.onEntityReady(maid);
+        }
+        // P11：hideEntity 状态不跨 relog（Paper 不持久化），opt-out 玩家进服要重新施加
+        if (visibility.isOptedOut(event.getPlayer().getUniqueId())) {
+            visibility.applyAllFor(event.getPlayer());
         }
     }
 

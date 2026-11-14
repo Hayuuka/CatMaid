@@ -552,7 +552,11 @@ public final class GuiManager implements Listener {
         maid.setModelId(modelId);
         NPC npc = maid.npc();
         if (npc != null) {
-            modelApplier.apply(npc, modelId);
+            // P11：apply 成功 = 产生全新的骨实体，要补一次实体就绪回调，
+            // 让 opt-out 玩家对新骨实体重新 hideEntity（blueprint 11.2"换模型不漏 spawn"）
+            if (modelApplier.apply(npc, modelId)) {
+                maidManager.onEntityReady(maid);
+            }
         }
         maidManager.saveAsync(maid);
         // 原地重绘，不重开界面：重开会闪一下，且当前页会丢

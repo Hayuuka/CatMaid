@@ -2720,3 +2720,62 @@ foxmaid 的 sit/idle 是纯静态单帧不受影响；winefox_blue 的 sit 是�
 4. 27 个模型重注入：19 个被钳制（+2.5 ~ +13.5px 不等），foxmaid 未动。数据面无解的
    模型（链上无合格 position 骨骼）会打印"跳过"并在日志可见。
 5. 复测重点：wedding/winefox 家族坐姿是否贴地不悬浮；若仍差，调 SIT_DROP_BASELINE。
+
+---
+
+## 28. Phase 11 交接（玩家级猫娘可见性开关 /catmaid hide，2026-11-14）
+
+### 28.1 骨骼枚举反射链 [JAR 已核，2026-11-14]
+
+对 `testserver/plugins/BetterModel.jar`（BetterModel 3.6.0，dev build 541）javap 复核，
+`MaidVisibilityManager` 的反射句柄全部按以下真实签名建立：
+
+```java
+kr.toxicity.model.api.BetterModel
+  static EntityTrackerRegistry registryOrNull(java.util.UUID);      // UUID / PlatformEntity / BaseEntity 三个重载仍在
+kr.toxicity.model.api.tracker.EntityTrackerRegistry
+  EntityTracker first();                                            // 返回 EntityTracker，不是 Tracker
+kr.toxicity.model.api.tracker.Tracker                               // EntityTracker extends Tracker
+  java.util.Collection<kr.toxicity.model.api.bone.RenderedBone> bones();
+kr.toxicity.model.api.bone.RenderedBone
+  kr.toxicity.model.api.nms.ModelDisplay getDisplay();              // 部分骨（定位骨）返回 null，要跳过
+kr.toxicity.model.api.nms.ModelDisplay extends kr.toxicity.model.api.nms.Identifiable
+  int id();
+  java.util.UUID uuid();                                            // 骨骼 display 实体的服务端 UUID
+```
+
+**关键事实**：`ModelDisplay` 继承 `Identifiable`，`uuid()` 直接给出骨骼 display 实体
+（服务端真实存在的展示实体，blueprint 11.0-1）的 UUID → `Bukkit.getEntity(uuid)` 可拿到
+`org.bukkit.entity.Entity` → 直接 `Player#hideEntity(Plugin, entity)`。无需解析 BM 内部类。
+
+### 28.2 实现要点（P11 落码）
+
+1. `Player#hideEntity(Plugin, Entity)` / `showEntity` 是 Paper API，逐玩家逐实体、幂等；
+   **hide 状态不跨 relog**，重新施加的四个挂点（blueprint 11.2 表）全部落码：
+   - `PlayerConnectionListener.onJoin` 尾部（opt-out 则 applyAllFor）；
+   - `MaidManager.onEntityReady` 尾部（恢复/召唤/上线补挂/复活四条路径）；
+   - `MaidTrait#onSpawn` **改为委托 `MaidManager.onEntityReady`**——区块重载 respawn 只触发
+     onSpawn、不走那四条路径，原先只在这里 applyVitals，现在委托后可见性也覆盖（旧行为在
+     插件未就绪时保留为 fallback）；
+   - `NameTagManager` 名牌（重）建成功处回调 `setOnSpawnCallback`（CatMaidPlugin 接线）；
+   - 换模型：`GuiManager` 模型页 `modelApplier.apply` 返回 true 后补调 `maidManager.onEntityReady`。
+2. 内存对账集 `maidId → playerUuid → 已 hide 实体 UUID 集`：只对集合里没有的 UUID 调
+   hideEntity，防重复调用；sweep（20 tick 一轮、按 npcId % 5 错峰，每只每 100 tick 一次）
+   只做"对账补漏"，不新增每 tick 任务。
+3. DB：`player_prefs(uuid TEXT PRIMARY KEY, hide_models INTEGER NOT NULL DEFAULT 0)`；
+   `loadHidePrefs()` 启动同步读（executor 无任务，同 loadAll 前提）、`setHideModels()`
+   走既有单线程 executor 异步 upsert。
+4. 命令 `hide`：无 catmaid.use 门槛（不想看猫娘的玩家未必养女仆），仅受
+   `commands.admin-only.hide`（默认 false）闸门；文案键 `hide-on` / `hide-off`。
+   messages.yml 升级注意：新键会自动补齐，但 **help 段不会被更新**（23.3-2 既有行为），
+   服主要手动把 `/catmaid hide` 那行加进 help。
+
+### 28.3 待实测（需真人双客户端，A=opt-out / B=对照）
+
+- A `/catmaid hide` 后骨骼 display + 名牌整体消失、B 不受影响；再输一次恢复。
+- 换模型 / 走动 / 区块重载 respawn 期间 A 始终看不见（不漏 spawn 新骨实体）。
+- **11.0-5 实测项**：opt-out 玩家是否看到 NPC 底层实体（裸玩家皮肤）——代码已把底层实体
+  一并 hideEntity（幂等无害），预期看不到；若实测仍可见则说明 hideEntity 对 BM 的
+  packet 通路无效，需要回填事实。
+- relog 后偏好保持（player_prefs 落库、进服即看不见）。
+- 30+ 女仆同屏 opt-out 玩家端性能（hide 后 BM 不再对其下发逐帧包）。

@@ -39,6 +39,8 @@ commands:
     bell: false
     # /catmaid release [名字] —— 送走女仆（不可逆，二次确认）
     release: false
+    # /catmaid hide —— 玩家级猫娘可见性开关（P11，玩家自己 toggle，默认开放）
+    hide: false
 
 # 女仆模型池：召唤时若未指定模型，从这里随机取一个
 # 模型名必须与 plugins/BetterModel/models/ 内的文件名（去扩展名）一致

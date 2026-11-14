@@ -1,5 +1,6 @@
 package dev.catmaid.maid;
 
+import dev.catmaid.CatMaidPlugin;
 import net.citizensnpcs.api.trait.Trait;
 import net.citizensnpcs.api.util.DataKey;
 
@@ -42,9 +43,17 @@ public final class MaidTrait extends Trait {
 
     @Override
     public void onSpawn() {
-        if (maid != null) {
-            // 装备与血量上限都要在每次生成后补：Citizens 重建实体时这两样都回到默认值，
-            // 而启动恢复时本回调早于 bind()（maid 为 null），由 MaidManager#attach 兜底
+        if (maid == null) {
+            return;
+        }
+        // P11 起委托给 MaidManager.onEntityReady（装备血量 + 猫娘可见性重施加都在那里）：
+        // 区块重载 respawn 只有 onSpawn 会触发，不走 MaidManager 的四条路径——
+        // 若在这里只做 applyVitals，opt-out 玩家会看到 respawn 出来的新骨实体（blueprint 11.2）。
+        // 启动恢复时本回调早于 bind()（maid 已判空），而插件尚未就绪时退回旧行为。
+        CatMaidPlugin plugin = CatMaidPlugin.get();
+        if (plugin != null && plugin.maidManager() != null) {
+            plugin.maidManager().onEntityReady(maid);
+        } else {
             maid.applyVitals();
         }
     }

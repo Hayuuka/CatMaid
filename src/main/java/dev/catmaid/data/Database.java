@@ -86,6 +86,13 @@ public final class Database implements AutoCloseable {
                     )
                     """);
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_maids_owner ON maids(owner_uuid)");
+            // P11 新增：玩家级猫娘可见性偏好（blueprint 0.6）
+            st.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS player_prefs (
+                      uuid        TEXT PRIMARY KEY,
+                      hide_models INTEGER NOT NULL DEFAULT 0
+                    )
+                    """);
         }
     }
 

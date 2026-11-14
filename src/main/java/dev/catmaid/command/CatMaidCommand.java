@@ -7,6 +7,7 @@ import dev.catmaid.gui.GuiManager;
 import dev.catmaid.maid.AffectionTable;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
+import dev.catmaid.maid.MaidVisibilityManager;
 import dev.catmaid.maid.ModelRegistry;
 import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
@@ -84,6 +85,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
     private final DialogueManager dialogue;
     private final NameTagManager nameTags;
     private final MaidItems items;
+    private final MaidVisibilityManager visibility;
 
     /** 魂符自助领取的冷却：玩家 UUID → 可以再领的时间戳（毫秒）。 */
     private final Map<UUID, Long> talismanReadyAt = new HashMap<>();
@@ -94,7 +96,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
 
     public CatMaidCommand(MaidManager maidManager, ModelRegistry models, Plugin plugin,
                           GuiManager gui, AffectionManager affection, DialogueManager dialogue,
-                          NameTagManager nameTags, MaidItems items) {
+                          NameTagManager nameTags, MaidItems items, MaidVisibilityManager visibility) {
         this.maidManager = maidManager;
         this.models = models;
         this.plugin = plugin;
@@ -103,6 +105,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
         this.dialogue = dialogue;
         this.nameTags = nameTags;
         this.items = items;
+        this.visibility = visibility;
     }
 
     @Override
@@ -130,6 +133,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
             case "soul" -> soul(sender, args);
             case "bell" -> bell(sender, args);
             case "release" -> release(sender, args);
+            case "hide" -> hide(sender);
             case "admin" -> admin(sender, args);
             default -> sendHelp(sender);
         }
@@ -474,6 +478,25 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
     /** 取第 {@code index} 个参数，越界返回 null——各命令用它读"可选的女仆名"。 */
     private static String optionalArg(String[] args, int index) {
         return args.length > index ? args[index] : null;
+    }
+
+    /**
+     * 玩家级猫娘可见性开关（P11，{@code /catmaid hide}）。
+     *
+     * <p>toggle 语义：开启后该玩家看不到所有猫娘女仆的渲染实体（含自己的），再输一次恢复。
+     * 交互语义（blueprint 11.3，文案里已写明）：看不见 ≠ 不存在——瞄不准、点不到她的实体，
+     * 但命令与 GUI 走服务端逻辑不依赖可见性，仍可正常操作。
+     *
+     * <p>不设 {@code catmaid.use} 门槛：不想看猫娘的玩家未必养女仆；唯一闸门是
+     * {@code commands.admin-only.hide}（默认 false，进入 switch 前的 adminOnly 统一检查）。
+     */
+    private void hide(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            Messages.send(sender, "player-only");
+            return;
+        }
+        boolean nowHidden = visibility.toggle(player);
+        Messages.send(player, nowHidden ? "hide-on" : "hide-off");
     }
 
     private void admin(CommandSender sender, String[] args) {
@@ -1012,6 +1035,11 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
                         subs.add(sub);
                     }
                 }
+            }
+            // P11：hide 不设 catmaid.use 门槛（不想看猫娘的玩家未必养女仆），
+            // 但仍受 commands.admin-only.hide 闸门约束
+            if (!adminOnly("hide") || admin) {
+                subs.add("hide");
             }
             if (admin) {
                 subs.add("admin");

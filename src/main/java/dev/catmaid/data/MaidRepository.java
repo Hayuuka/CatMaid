@@ -11,8 +11,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -84,6 +86,41 @@ public final class MaidRepository {
             loadStats(maid);
         }
         return maids;
+    }
+
+    /**
+     * 启动时同步读出全部 opt-out 玩家（P11）。
+     *
+     * <p>与 {@link #loadAll()} 同理：onEnable 主线程调用时 executor 尚无排队任务，
+     * 直接读连接是安全的。
+     */
+    public Set<UUID> loadHidePrefs() {
+        Set<UUID> result = new HashSet<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT uuid FROM player_prefs WHERE hide_models = 1");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                result.add(UUID.fromString(rs.getString("uuid")));
+            }
+        } catch (SQLException e) {
+            logger.log(Level.SEVERE, "读取 player_prefs 失败", e);
+        }
+        return result;
+    }
+
+    /** 写入/更新玩家的猫娘隐藏偏好（P11）：toggle 先改内存态，这里异步跟进落库。 */
+    public void setHideModels(UUID uuid, boolean hide) {
+        executor.execute(() -> {
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO player_prefs (uuid, hide_models) VALUES (?,?)"
+                            + " ON CONFLICT(uuid) DO UPDATE SET hide_models = excluded.hide_models")) {
+                ps.setString(1, uuid.toString());
+                ps.setInt(2, hide ? 1 : 0);
+                ps.executeUpdate();
+            } catch (SQLException e) {
+                logger.log(Level.SEVERE, "写入 player_prefs 失败：" + uuid, e);
+            }
+        });
     }
 
     /** onDisable：等排队中的写全部落地。 */

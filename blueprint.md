@@ -20,7 +20,7 @@
 
 ### 0.2 需求范围
 
-**做**：女仆实体（东方模型）、战斗模式、农业模式、畜牧模式、背包/装备管理 GUI、好感度养成、台词系统、死亡/复活、魂符收纳女仆（P9）、主副手物品模型可见（P9——原"不做"项由服主 2026-11-12 需求反转）、依赖模式配置（P9）。
+**做**：女仆实体（东方模型）、战斗模式、农业模式、畜牧模式、背包/装备管理 GUI、好感度养成、台词系统、死亡/复活、魂符收纳女仆（P9）、主副手物品模型可见（P9——原"不做"项由服主 2026-11-12 需求反转）、依赖模式配置（P9）、玩家级猫娘可见性开关（P11——不想看到猫娘的玩家可对自身关闭全部女仆模型渲染，服主 2026-11-14 增补）。
 **不做**：**盔甲**在模型上可见（仍排除——模型自带外观）、AI 聊天、饰品、P 点祭坛、小游戏。
 
 ### 0.3 架构图（文字版）
@@ -28,7 +28,7 @@
 ```
 CatMaid 插件（自研）
  ├─ 领域层   Maid / MaidManager / MaidTrait(Citizens Trait, 纯数据标记) / ModelAnimator(三姿态动画状态机)
- │           / NameTagManager(名牌) / HandItemDisplays(主副手物品显示, P9)
+ │           / NameTagManager(名牌) / HandItemDisplays(主副手物品显示, P9) / MaidVisibilityManager(玩家级猫娘隐身, P11)
  ├─ 行为层   BehaviorManager → Idle/Follow/Combat/Farm/Ranch 五个 BehaviorMode
  │           （tick 由 CatMaidPlugin 全局调度器每 tick 推行——玩家型 NPC 的 Trait#run()
  │             永不会被 Citizens 调用 [已实测]，见附录 A）
@@ -122,7 +122,8 @@ dev.catmaid
  │   ├─ MaidTrait                 // extends net.citizensnpcs.api.trait.Trait
  │   ├─ MaidInventory             // 虚拟背包（36格语义：0-5装备位，6-35存储位）
  │   ├─ MaidStats                 // 统计
- │   └─ ModelRegistry             // 可用东方模型清单（读 config）
+ │   ├─ ModelRegistry             // 可用东方模型清单（读 config）
+ │   └─ MaidVisibilityManager     // 玩家级猫娘隐身（P11）：opt-out 玩家对女仆渲染实体逐个 hideEntity
  ├─ behavior
  │   ├─ BehaviorManager           // 模式注册表 + tick 分发 + 全局节流
  │   ├─ BehaviorMode              // 接口
@@ -187,6 +188,10 @@ CREATE TABLE IF NOT EXISTS maid_stats (
   breeds   INTEGER NOT NULL DEFAULT 0,
   shears   INTEGER NOT NULL DEFAULT 0,
   milks    INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS player_prefs (          -- P11 新增
+  uuid        TEXT PRIMARY KEY,                   -- 玩家 UUID
+  hide_models INTEGER NOT NULL DEFAULT 0           -- 1=该玩家看不见全部猫娘女仆（渲染实体对其 hideEntity）
 );
 ```
 
@@ -1261,6 +1266,81 @@ provider=craftengine：凭证物品用 CE 自定义物品（catmaid:bell / catma
 
 ---
 
+## Phase 11 — 玩家级猫娘可见性开关（不想看猫娘的玩家 opt-out，服主 2026-11-14 增补）
+
+> **背景与裁决**：生产服走 craftengine 路线，模型资源由 CE 强制包统一下发——**资源包是全局的，无法按玩家裁剪**，所以"看不见猫娘"只能在渲染实体层做。裁决（2026-11-14）：用 **Paper 原生 per-player `hideEntity`** 对女仆的全部渲染实体逐个隐藏，**不引入 PacketEvents**（零新依赖，符合 agent.md 1.4；hideEntity 走实体追踪系统的 removeViewer，隐藏后连 BetterModel 逐帧驱动的 transform/teleport 包都不再向该玩家下发，比拦 SpawnEntity 包更干净、实现量更小）。
+
+### 11.0 原理与 API 事实（防幻觉，先读）
+
+1. BetterModel 的模型 = **一批服务端真实存在的展示实体**（每根有渲染载体的骨一个 display，foxmaid 110 根骨），由 BM 逐帧驱动（api-facts 24.3、附录 A"动画不在资源包"条目）。隐藏它们 = 该玩家看不到整个模型。
+2. 骨骼枚举链路 **[JAR 已核，api-facts 24.3-3]**：
+   `BetterModel.registryOrNull(UUID)` → `EntityTrackerRegistry#first()` → `Tracker#bones()` → `RenderedBone#getDisplay()`（**部分骨返回 null，跳过**——24.3-1 已实测定位骨无 display）。
+3. BetterModel 是 paper-plugin、classloader 隔离——骨骼枚举**全部走反射**，姿势与 `ModelApplier` 一致（从 BetterModel 自己的 classloader 取类，不写死渲染器包名）。
+4. `Player#hideEntity(Plugin, Entity)` / `showEntity` 是 Paper API，逐玩家逐实体粒度，重复调用幂等；**hide 状态不跨玩家 relog**，重进服必须重新施加。
+5. BM 的 `player-hide-delay` 已在模型接管渲染后隐藏 NPC 底层实体（api-facts 16.9）——**P11 首验必须实测确认** opt-out 玩家同样看不到底层实体（含原版名牌）；若实测仍可见，则把底层实体一并 `hideEntity`。
+
+### 11.1 要隐藏的实体清单（对 opt-out 玩家；其他玩家零影响）
+
+| # | 实体 | 来源 |
+|---|---|---|
+| 1 | 模型全部骨骼 display 实体 | `Tracker#bones()` 枚举，`getDisplay() != null` 的逐个 hide |
+| 2 | 头顶名牌 TextDisplay | `NameTagManager.displays`（maidId → 实体 UUID） |
+| 3 | NPC 底层实体 | 11.0-5：默认被 BM 全局隐藏，实测确认；不可见则跳过，可见则一并 hide |
+
+收纳态 / 铃铛态没有实体，不参与；女仆移除 / 死亡转铃铛后实体消失自然不可见，无需清理。
+
+### 11.2 重新施加 hide 的时机（新实体 UUID 产生处 + 状态失效处）
+
+| 时机 | 挂点 |
+|---|---|
+| 玩家上线（hide 不跨 relog） | `PlayerConnectionListener.onJoin` 尾部：opt-out 则对在场全部女仆 `applyAllFor(player)` |
+| 女仆实体就绪（恢复/召唤/上线补挂/复活/区块重载 respawn） | `MaidManager.onEntityReady`（四条路径都过它，`MaidTrait#onSpawn` 在其覆盖内）+ `ModelApplier.apply` 成功后（换模型产生全新骨实体）：对全部在线 opt-out 玩家 hide 该女仆 |
+| 名牌重建（NameTagManager 每 tick 重建链路） | `NameTagManager.spawn()` 成功处回调 visibilityManager：对全部在线 opt-out 玩家 hide 该名牌 |
+| 玩家切换 opt-out | 命令入口（11.3）：开 → `applyAllFor`；关 → `restoreFor` |
+| 兜底对账 | 低频 sweep（每 100 tick，按 npcId 错峰）：对内存"已隐藏对账集"比对补漏，防挂点遗漏 |
+
+### 11.3 命令与文案
+
+```
+/catmaid hide    ← 玩家级 toggle：开启后看不到所有猫娘女仆（含自己的），再次输入恢复
+```
+
+- 进 `commands.admin-only.hide` 闸门（10.4 附带需求机制，默认 false）、帮助列表、tab 补全。
+- messages.yml 新键：`hide-on` / `hide-off`（说明效果与"再输一次恢复"）。
+- **交互语义（预期行为，非 bug）**：opt-out 玩家看不见自己的女仆 = 瞄不准实体、点不到她；命令与 GUI 走服务端逻辑不依赖可见性，仍可操作。文案里写明这一点。
+
+### 11.4 新增 / 改动文件
+
+| 文件 | 职责 |
+|---|---|
+| `maid/MaidVisibilityManager`（新增） | opt-out 集合（内存 + DB）；`toggle(player)`、`applyAllFor(player)` / `restoreFor(player)`、`hideMaidFromOptedOut(maid)`（实体就绪/换模型/名牌重建时调用）；枚举某女仆全部渲染实体（骨 display 反射枚举 + 名牌 + 底层实体）；内存 maidId×playerUUID 对账集防重复调用；sweep 任务 |
+| `data/MaidRepository`（扩展） | `player_prefs` 读写：`getHideModels(uuid)` / `setHideModels(uuid, boolean)`，走既有单线程 executor；`Database` 加建表 |
+| `maid/NameTagManager`（小改） | `spawn()` 成功处回调 visibilityManager（构造注入或 CatMaidPlugin 接线，保持监听器/管理器单向依赖） |
+| `maid/MaidManager`（小改） | `onEntityReady` 尾部回调 hide；`ModelApplier.apply` 成功路径同理 |
+| `listener/PlayerConnectionListener`（小改） | onJoin 尾部 applyAllFor |
+| `command/CatMaidCommand`（扩展） | `hide` 子命令 + 闸门 + 帮助 + tab 补全 |
+| `resources/messages.yml` | 新增 `hide-on` / `hide-off` 模板键 |
+
+### 11.5 实现约束
+
+1. **零新依赖**（不引入 PacketEvents / 任何新插件）。BetterModel 链路一律反射，方法签名按名字查找（同 `ModelApplier.findSetRenderer` 姿势）；确认不到就降级为"只隐名牌 + 底层实体"并告警，现场留 `// API_ASSUMPTION:` 注释，同时把事实记进 docs/api-facts.md。
+2. `hideEntity` / `showEntity` 只在主线程调用（实体操作）；DB 读写异步（既有 executor），toggle 时先改内存态立即生效、持久化异步跟进。
+3. 错峰纪律照 agent.md 7.1：sweep 每 100 tick 且按 npcId 错峰；不新增任何每 tick 扫描。
+4. 不改 BetterModel / Citizens / CE 的任何文件；不触碰资源包链路（P10-10.3 口径不变）。
+
+### 验收清单（Phase 11）
+> 观感类验收需两个真人客户端（A=opt-out，B=对照）；无玩家在线时先 `/npc spawn <id>`（同 P10 注）。
+
+- [ ] A `/catmaid hide` 后 A 视角女仆（模型骨骼 + 名牌）整体消失，B 视角完全正常；A 再输一次恢复且文案正确
+- [ ] A opt-out 期间女仆走动 / 坐下 / 换模型 / 区块重载 respawn：A 始终看不见、B 始终正常（换模型不向 A 漏 spawn 新骨实体）
+- [ ] A 下线重上：opt-out 偏好保持（player_prefs 落库），进服即仍看不见
+- [ ] A opt-out 时非女仆实体（原版生物、若有其他 BM 模型 NPC）渲染不受影响；A 自己的 GUI / 命令操作正常
+- [ ] **11.0-5 实测项**：opt-out 玩家看不到 NPC 底层实体（看不到裸玩家皮肤）；若可见则已一并 hide 并把事实回填 api-facts
+- [ ] 30+ 女仆同屏，opt-out 玩家端 TPS / 帧率无异常（hide 后 BM 不再对其下发逐帧包）
+- [ ] 构建通过、启动 0 ERROR（`gradlew shadowJar` + 本地 Paper 26.2 启动）
+
+---
+
 ## 附录 A — 风险与降级预案
 
 | 风险 | 预案 |
@@ -1293,16 +1373,18 @@ provider=craftengine：凭证物品用 CE 自定义物品（catmaid:bell / catma
 | CE 合并 BM 包后模型/物品渲染异常（P10-10.3 craftengine 路线） | [渲染项已解决] send_pack 故障已修复并实测通过（api-facts 4.3，2026-11-13）：CE 合并单包下模型 NPC 渲染正常无紫黑。启用 provider=craftengine 前剩余：CE 侧定义 catmaid:bell / catmaid:talisman 物品、provider 全链路实测（api-facts 24.3-6）。禁止混搭态的口径不变 |
 | 铃铛丢失导致女仆永久占位、玩家被上限锁死 | **事实**[已定位]：全灭 + 铃铛丢失时 maid 永远 alive=0 且占 `max-per-player` 名额。**采用方案**（P10-10.4）：DB 为绑定事实来源、物品只是凭证——`/catmaid bell` 补发（收同额复活材料）+ `/catmaid release` 自助送走（二次确认）；上限口径不变但出口常开 |
 | 对带原生库的依赖做 shade relocate | **事实**[2026-11-13 实测]：sqlite-jdbc 3.50.3.0 的动态库按硬编码 `org/sqlite/core/NativeDB` 注册 natives，导出表只有 `Java_org_sqlite_*`——relocate 到 `dev.catmaid.libs.sqlite` 后所有 native 方法绑定失败（插件自禁用）。**采用方案**（P10）：不 relocate（Paper 类加载器已隔离各插件），详见 api-facts 26.3。**通用教训**：shading 任何带 JNI 绑定的依赖前，先写最小探针验证 native 加载 |
+| 玩家 opt-out 后仍看到裸玩家皮肤或名牌残留（P11） | **预案**：hideEntity 不跨 relog——四个重新施加时机照 Phase 11.2 表逐一挂点，另设低频 sweep 对账兜底；BM 底层实体是否被 `player-hide-delay` 全局隐藏需实测（P11 验收项），仍可见则对底层实体一并 hide；骨骼枚举链 `Tracker#bones()` 已 JAR 核（api-facts 24.3-3），反射签名缺失时降级为只隐名牌+底层实体并告警 |
 
 ## 附录 B — 阶段依赖关系
 
 ```
-P0 ─→ P1 ─→ P2 ─→ P3 ─→ P4 ─→ P5 ─→ P6 ─→ P7 ─→ P8 ─→ P9 ─→ P10
+P0 ─→ P1 ─→ P2 ─→ P3 ─→ P4 ─→ P5 ─→ P6 ─→ P7 ─→ P8 ─→ P9 ─→ P10 ─→ P11
               │                    │                        │
               └─ P2 依赖 P1 的 Maid/GUI 持久化    └─ P5/P6 依赖 P3 行为框架与 P4 好感度钩子
                                                              │
                                         P9 依赖 P4 的魂符/死亡体系与 P8 的命令框架；
-                                        P10 修复 P8 遗留（命令/多女仆/双包/铃铛绑定），10.3 依赖 P9 的 provider 配置
+                                        P10 修复 P8 遗留（命令/多女仆/双包/铃铛绑定），10.3 依赖 P9 的 provider 配置；
+                                        P11 依赖 P9/P10 的模型挂载与 NameTagManager 结构（渲染实体枚举 + 挂点位置）
 ```
 严格按序实施；每阶段验收清单全部勾选后才允许进入下一阶段（见 agent.md 第 3 节）。
 P8 曾在两项未验证时由服主决定收口（见 P8 状态注），该欠账由 P10-10.5 回归还清，此后不再允许带未验项收口。

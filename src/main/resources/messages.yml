@@ -37,6 +37,10 @@ state-alive: "<green>存活"
 state-bell: "<gray>铃铛"
 state-stored: "<light_purple>魂符中"
 
+# 玩家级猫娘可见性开关（P11）
+hide-on: "<green>已隐藏所有猫娘女仆（包括你自己的）——她们还在原地干活，只是你看不到了。<gray>注意：你瞄不到、也点不到她们的实体，但命令和菜单照常能用。再输入一次 <yellow>/catmaid hide</yellow> 即可恢复显示。"
+hide-off: "<green>已恢复显示：所有猫娘女仆重新对你可见。"
+
 help:
   - "<light_purple>猫娘女仆 <dark_gray>—</dark_gray> 当前可用命令："
   - "<gray>/catmaid gui [名字] <dark_gray>—</dark_gray> 打开她的菜单（多只女仆时可用名字指定）"
@@ -49,6 +53,7 @@ help:
   - "<gray>/catmaid soul [数量] <dark_gray>—</dark_gray> 领几张未唤醒的魂符（召唤）"
   - "<gray>/catmaid bell [名字] <dark_gray>—</dark_gray> 补发倒下女仆的铃铛（收复活材料，丢了不怕）"
   - "<gray>/catmaid release [名字] <dark_gray>—</dark_gray> 送走女仆（不可逆！聊天栏再输一次名字确认）"
+  - "<gray>/catmaid hide <dark_gray>—</dark_gray> 隐藏/显示所有猫娘女仆的模型（不想看猫娘时用，再输一次恢复）"
   - "<gray>/catmaid admin summon <玩家> [模型]"
   - "<gray>/catmaid admin list [玩家]"
   - "<gray>/catmaid admin remove <玩家|女仆UUID>"

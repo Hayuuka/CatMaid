@@ -48,6 +48,9 @@ public final class NameTagManager {
     private final Map<UUID, UUID> displays = new HashMap<>();
     /** maidId → 上次写进名牌的好感等级：等级变了才重设文本，免得每 tick 刷一遍组件。 */
     private final Map<UUID, Integer> renderedLevels = new HashMap<>();
+    /** 名牌（重）建成功后的回调（P11）：opt-out 玩家对新名牌要重新 hideEntity。
+     *  由 CatMaidPlugin 接线到 MaidVisibilityManager，保持单向依赖。 */
+    private java.util.function.Consumer<Maid> onSpawnCallback;
     private int ticker;
 
     public NameTagManager(Plugin plugin, FileConfiguration config) {
@@ -59,6 +62,16 @@ public final class NameTagManager {
 
     public boolean enabled() {
         return enabled;
+    }
+
+    /** P11：接线"名牌（重）建成功"回调（CatMaidPlugin 在两个管理器都就绪后调用）。 */
+    public void setOnSpawnCallback(java.util.function.Consumer<Maid> callback) {
+        this.onSpawnCallback = callback;
+    }
+
+    /** P11：取某女仆当前的名牌实体（没有或已失效返回 null），供可见性管理器枚举渲染实体。 */
+    public TextDisplay displayEntity(Maid maid) {
+        return find(maid);
     }
 
     public void start(Supplier<Collection<Maid>> source) {
@@ -102,6 +115,10 @@ public final class NameTagManager {
             }
             displays.put(maid.getId(), display.getUniqueId());
             renderedLevels.put(maid.getId(), level(maid));
+            // P11：名牌是新实体，通知可见性管理器对 opt-out 玩家补 hide
+            if (onSpawnCallback != null) {
+                onSpawnCallback.accept(maid);
+            }
         } else if (renderedLevels.getOrDefault(maid.getId(), -1) != level(maid)) {
             // 好感度过档才换名字颜色（蓝图 P8：灰→白→黄→粉→红），不必每 tick 重设文本
             display.text(text(maid));

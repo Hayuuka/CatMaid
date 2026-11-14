@@ -19,6 +19,7 @@ import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.ModelAnimator;
 import dev.catmaid.maid.ModelApplier;
 import dev.catmaid.maid.ModelRegistry;
+import dev.catmaid.maid.MaidVisibilityManager;
 import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
@@ -47,6 +48,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private ModelRegistry modelRegistry;
     private ModelApplier modelApplier;
     private NameTagManager nameTagManager;
+    private MaidVisibilityManager visibilityManager;
     private MaidItems maidItems;
     private BehaviorManager behaviorManager;
     private BukkitTask saveTask;
@@ -101,8 +103,16 @@ public final class CatMaidPlugin extends JavaPlugin {
         AffectionManager affectionManager = new AffectionManager(getConfig(), dialogueManager, repository);
         behaviorManager = new BehaviorManager(getConfig(), new ModelAnimator(getLogger()),
                 affectionManager, dialogueManager);
+        // P11 接线顺序：名牌管理器先建（可见性管理器要向它查名牌实体），可见性管理器再建
+        // （MaidManager 的 onEntityReady 要回调它），随后接线名牌重建回调；
+        // 女仆集合用惰性 supplier，此时 maidManager 还没建好。
+        nameTagManager = new NameTagManager(this, getConfig());
+        visibilityManager = new MaidVisibilityManager(this, repository, nameTagManager,
+                () -> maidManager.all(), getLogger());
+        nameTagManager.setOnSpawnCallback(visibilityManager::hideMaidFromOptedOut);
+        visibilityManager.loadPrefs();
         maidManager = new MaidManager(repository, modelRegistry, modelApplier, behaviorManager,
-                dialogueManager, getConfig(), getLogger());
+                dialogueManager, visibilityManager, getConfig(), getLogger());
 
         maidManager.loadAll();
         // Citizens 异步加载 NPC（启动后数秒才完成），BetterModel 的模型表也在 delayed init 之后才可用。
@@ -110,10 +120,12 @@ public final class CatMaidPlugin extends JavaPlugin {
         scheduleRestore();
 
         // 头顶名牌：模型会隐藏原版名牌，这里用 TextDisplay 独立显示，按 npcId 错峰跟随
-        nameTagManager = new NameTagManager(this, getConfig());
         nameTagManager.start(maidManager::all);
+        // P11：opt-out 对账 sweep（每 20 tick 一轮、按 npcId 错峰，每只每 100 tick 对账一次）
+        visibilityManager.start();
 
-        getServer().getPluginManager().registerEvents(new PlayerConnectionListener(this, maidManager, maidItems), this);
+        getServer().getPluginManager().registerEvents(
+                new PlayerConnectionListener(this, maidManager, maidItems, visibilityManager), this);
 
         // 交互层：右键开菜单/喂食 + 5 个 GUI 的点击/拖拽/关闭回写
         GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier, dialogueManager);
@@ -135,7 +147,7 @@ public final class CatMaidPlugin extends JavaPlugin {
                 new OwnerProtectionListener(this, maidManager, behaviorManager), this);
 
         CatMaidCommand command = new CatMaidCommand(maidManager, modelRegistry, this, guiManager,
-                affectionManager, dialogueManager, nameTagManager, maidItems);
+                affectionManager, dialogueManager, nameTagManager, maidItems, visibilityManager);
         PluginCommand pluginCommand = getCommand("catmaid");
         if (pluginCommand != null) {
             pluginCommand.setExecutor(command);
@@ -202,6 +214,9 @@ public final class CatMaidPlugin extends JavaPlugin {
         }
         if (nameTagManager != null) {
             nameTagManager.shutdown();
+        }
+        if (visibilityManager != null) {
+            visibilityManager.shutdown();
         }
         if (maidManager != null) {
             maidManager.saveAll();
