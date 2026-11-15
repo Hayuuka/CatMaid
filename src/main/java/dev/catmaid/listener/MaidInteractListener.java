@@ -1,6 +1,7 @@
 package dev.catmaid.listener;
 
 import dev.catmaid.dialogue.AffectionManager;
+import dev.catmaid.event.MaidRemoveEvent;
 import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.gui.GuiManager;
@@ -133,6 +134,12 @@ public final class MaidInteractListener implements Listener {
         world.spawnParticle(Particle.CLOUD, loc, 18, 0.25, 0.5, 0.25, 0.02);
         world.spawnParticle(Particle.ENCHANT, loc, 20, 0.3, 0.5, 0.3, 0.4);
         world.playSound(loc, Sound.BLOCK_BEACON_DEACTIVATE, 0.8f, 1.6f);
+    }
+
+    /** 女仆被移除时清掉她的喂食冷却（issue #5）：fedAt 以 maidId 为键，没有别的清理时机。 */
+    @EventHandler
+    public void onMaidRemove(MaidRemoveEvent event) {
+        fedAt.remove(event.getMaid().getId());
     }
 
     private boolean isFeedable(ItemStack item) {

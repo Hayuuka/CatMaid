@@ -3,6 +3,7 @@ package dev.catmaid.maid;
 import dev.catmaid.behavior.BehaviorManager;
 import dev.catmaid.data.MaidRepository;
 import dev.catmaid.dialogue.DialogueManager;
+import dev.catmaid.event.MaidRemoveEvent;
 import dev.catmaid.event.MaidSummonEvent;
 import net.citizensnpcs.api.CitizensAPI;
 import net.citizensnpcs.api.npc.NPC;
@@ -325,6 +326,11 @@ public final class MaidManager {
             npc.destroy();
         }
         behavior.forget(maid);
+        visibility.forgetMaid(maidId);
+        // 移除事件（蓝图 0.5 预留）：各监听器按 maidId 记的零散缓存靠它统一回收（issue #5）。
+        // 放在 NPC 销毁之后、落库之前：监听器拿到的是"已确定要走"的女仆，且 DB 还没删——
+        // 万一有插件想在她消失前读最后一眼数据也来得及
+        Bukkit.getPluginManager().callEvent(new MaidRemoveEvent(maid));
         repository.delete(maidId);
         return true;
     }

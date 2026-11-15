@@ -212,6 +212,14 @@ public final class MaidVisibilityManager {
         ledger.values().removeIf(Map::isEmpty);
     }
 
+    /**
+     * 女仆被移除时清掉她的全部对账记录（issue #5）：ledger 以 maidId 为外层键，
+     * handleQuit/restoreFor 只按玩家维度清，被送走的女仆的死键没有别的回收时机。
+     */
+    public void forgetMaid(UUID maidId) {
+        ledger.remove(maidId);
+    }
+
     // ---- 内部 ----
 
     /**

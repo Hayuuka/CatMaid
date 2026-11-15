@@ -3,6 +3,7 @@ package dev.catmaid.command;
 import dev.catmaid.dialogue.AffectionManager;
 import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
+import dev.catmaid.event.MaidRemoveEvent;
 import dev.catmaid.gui.GuiManager;
 import dev.catmaid.maid.AffectionTable;
 import dev.catmaid.maid.Maid;
@@ -817,6 +818,16 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
                         System.currentTimeMillis() + CONFIRM_TIMEOUT_MS));
         Messages.send(player, "sendaway-confirm", Map.of("name", maid.getName()));
         Messages.send(player, "sendaway-confirm-2", Map.of("name", maid.getName()));
+    }
+
+    /**
+     * 女仆被移除时清掉她的送走待确认记录（issue #5）：pendingRelease 的值里握着 maidId，
+     * 玩家确认前女仆被 admin remove 的话，记录只能靠超时或下一次聊天才被清，quit 也不清。
+     */
+    @EventHandler
+    public void onMaidRemove(MaidRemoveEvent event) {
+        UUID maidId = event.getMaid().getId();
+        pendingRelease.values().removeIf(pending -> pending.maidId().equals(maidId));
     }
 
     /** /catmaid release 的聊天栏二次确认（详见 {@link #release}）。 */

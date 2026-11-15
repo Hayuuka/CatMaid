@@ -5,6 +5,7 @@ import dev.catmaid.dialogue.AffectionManager;
 import dev.catmaid.dialogue.AffectionReason;
 import dev.catmaid.dialogue.DialogueManager;
 import dev.catmaid.event.MaidDeathEvent;
+import dev.catmaid.event.MaidRemoveEvent;
 import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.util.MaidItems;
@@ -148,6 +149,16 @@ public final class MaidDamageListener implements Listener {
             return;
         }
         event.setDamage(event.getDamage() * (1 + bonus));
+    }
+
+    /**
+     * 女仆被移除时清掉她的受击冷却（issue #5）：两个表以 maidId 为键，死亡路径只清了倒下的那只，
+     * admin remove / 自助送走的女仆（送走时可能还活着）要靠本事件回收。
+     */
+    @EventHandler
+    public void onMaidRemove(MaidRemoveEvent event) {
+        hurtDialogueAt.remove(event.getMaid().getId());
+        hurtAffectionAt.remove(event.getMaid().getId());
     }
 
     /** 好感扣减冷却：蓝图没提多段伤害，火焰/岩浆每 10 tick 一跳，不节流会把好感放干（见类注释）。 */
