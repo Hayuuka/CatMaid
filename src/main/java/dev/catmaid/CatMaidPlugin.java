@@ -53,6 +53,7 @@ public final class CatMaidPlugin extends JavaPlugin {
     private BehaviorManager behaviorManager;
     private BukkitTask saveTask;
     private BukkitTask restoreTask;
+    private BukkitTask cleanupTask;
     private BukkitTask behaviorTask;
     private BukkitTask regenTask;
 
@@ -118,6 +119,12 @@ public final class CatMaidPlugin extends JavaPlugin {
         // Citizens 异步加载 NPC（启动后数秒才完成），BetterModel 的模型表也在 delayed init 之后才可用。
         // 因此按秒轮询恢复；30 秒后仍找不到 NPC 才认为真的丢了，重建兜底。
         scheduleRestore();
+
+        // 幽灵实体兜底（issue #1）：铃铛/收纳态女仆的残留实体由常驻 5 秒任务回收。
+        // 不能依赖启动恢复轮询——它在 awaitingNpc 清空时就自我取消，往往早于 Citizens
+        // 异步载入完成， Citizens 按存档复活出来的幽灵身体会错过唯一一次回收。
+        cleanupTask = getServer().getScheduler().runTaskTimer(this,
+                () -> maidManager.despawnHiddenNpcs(), 100L, 100L);
 
         // 头顶名牌：模型会隐藏原版名牌，这里用 TextDisplay 独立显示，按 npcId 错峰跟随
         nameTagManager.start(maidManager::all);
@@ -203,6 +210,10 @@ public final class CatMaidPlugin extends JavaPlugin {
         if (restoreTask != null) {
             restoreTask.cancel();
             restoreTask = null;
+        }
+        if (cleanupTask != null) {
+            cleanupTask.cancel();
+            cleanupTask = null;
         }
         if (behaviorTask != null) {
             behaviorTask.cancel();

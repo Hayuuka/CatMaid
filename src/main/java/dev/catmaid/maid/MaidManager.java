@@ -99,9 +99,6 @@ public final class MaidManager {
      */
     public boolean restoreNpcs(boolean allowRecreate) {
         boolean pending = false;
-        // 先处理铃铛态：Citizens 会按存档里的"已生成"状态把她们的实体一起恢复出来，
-        // 于是世界里多出一具没有名牌、还会被行为 tick 推动的幽灵身体（实测就是这么来的）。
-        despawnHiddenNpcs();
         for (UUID maidId : awaitingNpc) {
             Maid maid = maids.get(maidId);
             if (maid == null || !maid.isAlive()) {
@@ -126,10 +123,13 @@ public final class MaidManager {
      * 把"不该有实体"的女仆残留实体收掉：铃铛态（alive=false）与收纳态（stored=true）。
      *
      * <p>死亡/收纳时 Citizens 会自己 despawn 一次，但只要存档里带 "spawned" 状态，重启后它又会
-     * 把实体建回来。这里在每轮恢复里兜一遍，防止世界里留下没有名牌的女仆身体
-     * （玩家视角就是"多了一个没名字的女仆"）。
+     * 把实体建回来。**为什么由常驻低频任务驱动、不塞进启动恢复轮询**（issue #1）：恢复轮询在
+     * awaitingNpc 清空的那一刻就自我取消，往往早于 Citizens 异步载入 NPC——它按存档复活出来的
+     * 幽灵身体会错过那唯一一次回收机会，整场留在世界里（收纳态的还会被挂上名牌、被行为 tick
+     * 推着走）。本方法幂等（未 spawn 的直接跳过），5 秒一轮的成本只是遍历内存表加几次注册表
+     * 查询，顺带兜住运行期任何"不该有实体的女仆被 spawn 出来"的路径。
      */
-    private void despawnHiddenNpcs() {
+    public void despawnHiddenNpcs() {
         for (Maid maid : maids.values()) {
             if ((maid.isAlive() && !maid.isStored()) || maid.getNpcId() < 0) {
                 continue;
