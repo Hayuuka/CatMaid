@@ -553,7 +553,9 @@ public final class RanchMode implements BehaviorMode {
             state.lastPos = null;
             return;
         }
-        if (state.mate != null) {
+        // 第一只也可能在两趟之间被杀/被区块卸载：她没了就不算繁殖成功（issue #4）——
+        // 饲料已经喂出去只能白喂，与"partner 被牵走"同一口径：不结算也不奖励
+        if (state.mate != null && state.mate.isValid() && !state.mate.isDead()) {
             maid.stats().addBreed();
             reward(maid);
         }
