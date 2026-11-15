@@ -93,7 +93,10 @@ public final class NameTagManager {
                 continue;
             }
             live.add(maid.getId());
-            if (maid.getNpcId() % STAGGER != ticker % STAGGER) {
+            // floorMod 而不是 %：npcId=-1 时 % 给出 -1，永远匹配不上 ticker 的 0..4，
+            // update() 对这只女仆就永不执行——名牌一旦挂上便再走不到移除分支（issue #6）。
+            // 各 BehaviorMode 的错峰都用 floorMod，这里对齐。
+            if (Math.floorMod(maid.getNpcId(), STAGGER) != Math.floorMod(ticker, STAGGER)) {
                 continue;
             }
             update(maid);
