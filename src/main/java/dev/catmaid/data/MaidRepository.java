@@ -245,14 +245,23 @@ public final class MaidRepository {
 
     private void upsertMaid(Snapshot s) throws SQLException {
         // created_at 只在首次插入时写；冲突分支不更新它
+        //
+        // home 四列的写法（issue #2）：世界未加载时 Locations.toBukkit 返回 null，内存里的 home
+        // 就是 null——这不是"她没有家"，只是"这个世界还没加载"。此时必须保留 DB 里的旧值，
+        // 否则任意一次 saveAll 都会把家永久抹成 null/0（IdleMode 闲逛、onJoin 落点全失效，
+        // 且无日志无感知、事后无法恢复）。home_world 为 NULL 时坐标一并保留，避免出现
+        // "有坐标没世界"的残缺行。
         String sql = "INSERT INTO maids (id, owner_uuid, name, model_id, mode, affection, owner_title,"
                 + " alive, npc_id, home_world, home_x, home_y, home_z, sitting, stored, death_at, created_at)"
                 + " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 + " ON CONFLICT(id) DO UPDATE SET owner_uuid=excluded.owner_uuid, name=excluded.name,"
                 + " model_id=excluded.model_id, mode=excluded.mode, affection=excluded.affection,"
                 + " owner_title=excluded.owner_title, alive=excluded.alive, npc_id=excluded.npc_id,"
-                + " home_world=excluded.home_world, home_x=excluded.home_x, home_y=excluded.home_y,"
-                + " home_z=excluded.home_z, sitting=excluded.sitting, stored=excluded.stored,"
+                + " home_world=COALESCE(excluded.home_world, maids.home_world),"
+                + " home_x=CASE WHEN excluded.home_world IS NULL THEN maids.home_x ELSE excluded.home_x END,"
+                + " home_y=CASE WHEN excluded.home_world IS NULL THEN maids.home_y ELSE excluded.home_y END,"
+                + " home_z=CASE WHEN excluded.home_world IS NULL THEN maids.home_z ELSE excluded.home_z END,"
+                + " sitting=excluded.sitting, stored=excluded.stored,"
                 + " death_at=excluded.death_at";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             int i = 1;
