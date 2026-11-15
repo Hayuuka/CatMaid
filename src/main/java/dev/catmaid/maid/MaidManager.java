@@ -234,12 +234,15 @@ public final class MaidManager {
             return null;
         }
 
+        // 先落内存与库，再做表现层（挂模型/装备血量/特效/台词）。spawn 成功后的任何一步抛异常，
+        // 都不能留下"NPC 已生成、trait 已 bind、内存与库里却查无此人"的三不管状态——那具 NPC
+        // 重启后会被 Citizens 按 spawned 存档恢复成无人认领的幽灵身体（issue #8）。
+        maids.put(maid.getId(), maid);
+        repository.insert(maid);
+
         modelApplier.apply(npc, resolvedModel);
         onEntityReady(maid);
         playSummonEffect(spawn);
-
-        maids.put(maid.getId(), maid);
-        repository.insert(maid);
         // 台词在落库之后说：她开口时数据已经稳了，重启也不会变成"说了话但没这个人"
         dialogue.send(maid, "on_summon");
         return maid;
