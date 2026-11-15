@@ -89,6 +89,25 @@ public final class BehaviorManager {
         }
     }
 
+    /**
+     * 模式切换的唯一入口：先把旧模式的 per-maid 状态清掉（onDisable），再改字段。
+     *
+     * <p>GUI 与命令都必须走这里。直接 {@link Maid#setMode} 会把 CombatMode 锁定的目标引用、
+     * Farm/Ranch 的拉黑表原样带进下一次进入该模式——实体引用滞留、切回战斗瞬间还锁着旧目标
+     * （issue #3）。与 {@link #forget} 的区别：forget 是女仆被移除时的全量清理，这里只清
+     * 被切走的那个模式。
+     */
+    public void switchMode(Maid maid, Maid.Mode newMode) {
+        if (maid.getMode() == newMode) {
+            return;
+        }
+        BehaviorMode current = modes.get(maid.getMode());
+        if (current != null) {
+            current.onDisable(maid);
+        }
+        maid.setMode(newMode);
+    }
+
     public void tick(Maid maid, int tick) {
         // 铃铛态的女仆不能参与任何行为/计时：她的 NPC 可能被 Citizens 按存档"已生成"状态恢复出来
         // （实测重启后会出现一具没有名牌的幽灵身体），放任 tick 会让好感度凭空上涨、还会走动。

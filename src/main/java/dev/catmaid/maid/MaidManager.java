@@ -329,6 +329,15 @@ public final class MaidManager {
         return true;
     }
 
+    /**
+     * 模式切换唯一入口（GUI 与命令都走这里）：先清旧模式的 per-maid 状态再改字段，
+     * 见 {@link BehaviorManager#switchMode}。领域层不直接改 mode 字段是刻意的——
+     * 绕过这层就等于绕过各 Mode 的 onDisable。
+     */
+    public void switchMode(Maid maid, Maid.Mode newMode) {
+        behavior.switchMode(maid, newMode);
+    }
+
     // ---- 查询 ----
 
     public Optional<Maid> byId(UUID maidId) {

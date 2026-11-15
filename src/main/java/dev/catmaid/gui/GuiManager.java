@@ -512,7 +512,7 @@ public final class GuiManager implements Listener {
         if (maid.getMode() == target) {
             return;
         }
-        maid.setMode(target);
+        maidManager.switchMode(maid, target);
         maidManager.saveAsync(maid);
         // 模式台词（P4）：{@code on_mode_change.<MODE>}。放在这里而不是 Maid#setMode 里，
         // 是因为领域对象不该反向依赖台词服务；P8 的命令行切模式要记得同步补一句。

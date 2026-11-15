@@ -201,7 +201,7 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
             Messages.send(player, "mode-already", Map.of("name", maid.getName(), "mode", display));
             return;
         }
-        maid.setMode(target);
+        maidManager.switchMode(maid, target);
         maidManager.saveAsync(maid);
         dialogue.send(maid, "on_mode_change", target.name());
         Messages.send(player, "mode-changed", Map.of("name", maid.getName(), "mode", display));
