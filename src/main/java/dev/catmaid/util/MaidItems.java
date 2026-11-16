@@ -291,6 +291,34 @@ public final class MaidItems {
     }
 
     /**
+     * 玩家是否已持有该女仆的铃铛（issue #7：同一女仆同时只允许一张有效铃铛流通）。
+     *
+     * <p>扫背包全部格位（getContents 含盔甲/副手）+ 末影箱。地上的掉落铃铛扫不到——
+     * 但补发是唯一的"无中生有"口，堵住它就不会再产生新副本；已散落的旧副本是
+     * 历史遗留，一次性清理即可（铃铛掉落物无限存活，见 MaidDamageListener#drop）。
+     */
+    public boolean holdsBellFor(Player player, UUID maidId) {
+        String target = maidId.toString();
+        for (ItemStack item : player.getInventory().getContents()) {
+            if (isBell(item) && target.equals(pdcMaidId(item))) {
+                return true;
+            }
+        }
+        for (ItemStack item : player.getEnderChest().getContents()) {
+            if (isBell(item) && target.equals(pdcMaidId(item))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 直接取 PDC 里未解析的女仆 UUID 字符串（与 maidIdOf 不同：不做 UUID 合法性解析）。 */
+    private String pdcMaidId(ItemStack item) {
+        PersistentDataContainer pdc = pdc(item);
+        return pdc == null ? null : pdc.get(key(KEY_MAID_ID), PersistentDataType.STRING);
+    }
+
+    /**
      * 原地替换手里的魂符（TLM 的 {@code setItemInHand} 语义）。
      *
      * <p>魂符三态之间靠这个迁移：未唤醒→空、空→装着、装着→空。不是"消耗 + 新给一张"，

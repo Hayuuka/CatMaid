@@ -755,6 +755,12 @@ public final class CatMaidCommand implements CommandExecutor, TabCompleter, List
             Messages.send(player, "bell-already-alive", Map.of("name", maid.getName()));
             return;
         }
+        // issue #7：同一女仆只允许一张有效铃铛在流通（背包/末影箱已持有就不再发）。
+        // 挡在材料检查之前——过期免费分支同样受限，否则免费路径等于零成本刷铃铛。
+        if (items.holdsBellFor(player, maid.getId())) {
+            Messages.send(player, "bell-duplicate", Map.of("name", maid.getName()));
+            return;
+        }
         Cost cost = reviveCost();
         boolean free = bellExpired(maid);
         if (!free) {

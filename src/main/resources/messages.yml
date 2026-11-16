@@ -144,6 +144,8 @@ bell-already-alive: "<gray>{name} 已经醒着了。"
 # /catmaid bell：DB 是绑定的事实来源，铃铛丢了可以再补（收 revive-cost 同额材料防白嫖传送）
 bell-none: "<gray>你名下没有倒下的女仆。"
 bell-specify: "<gray>你有 {count} 只倒下的女仆，用 /catmaid bell <名字> 指定要补发的那一位。"
+# issue #7：同一女仆只允许一张有效铃铛（背包/末影箱已持有则拒绝补发）
+bell-duplicate: "<gray>{name} 的铃铛还在你身上（或末影箱里）。找到它就能把她叫醒，不用再补发一张。"
 bell-issued: "<light_purple>已补发 {name} 的铃铛（消耗 {item} × {amount}）。拿在手里右键，就能把她叫醒。"
 bell-issued-free: "<light_purple>{name} 已经等了 {days} 天了……这次不收材料。铃铛已放进你的背包。"
 # /catmaid release：主人自助送走，二次确认 = 聊天栏再输入一次名字
