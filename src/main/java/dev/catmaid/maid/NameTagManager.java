@@ -38,6 +38,8 @@ public final class NameTagManager {
 
     /** 错峰分母：每 tick 只处理 1/N 的女仆，分摊传送包与实体查询开销。 */
     private static final int STAGGER = 5;
+    /** 主人名重比对周期：ticker/STAGGER 每 5 tick 进 1，对 40 取模 → 每只女仆每 200 tick（10 秒）比对一次。 */
+    private static final int OWNER_RECHECK_ROUNDS = 40;
 
     private final Plugin plugin;
     private final boolean enabled;
@@ -48,6 +50,8 @@ public final class NameTagManager {
     private final Map<UUID, UUID> displays = new HashMap<>();
     /** maidId → 上次写进名牌的好感等级：等级变了才重设文本，免得每 tick 刷一遍组件。 */
     private final Map<UUID, Integer> renderedLevels = new HashMap<>();
+    /** maidId → 上次写进名牌的主人名：主人改名要跟着刷，但每 tick 查 OfflinePlayer 太重（issue #9）。 */
+    private final Map<UUID, String> renderedOwners = new HashMap<>();
     /** 名牌（重）建成功后的回调（P11）：opt-out 玩家对新名牌要重新 hideEntity。
      *  由 CatMaidPlugin 接线到 MaidVisibilityManager，保持单向依赖。 */
     private java.util.function.Consumer<Maid> onSpawnCallback;
@@ -118,6 +122,7 @@ public final class NameTagManager {
             }
             displays.put(maid.getId(), display.getUniqueId());
             renderedLevels.put(maid.getId(), level(maid));
+            renderedOwners.put(maid.getId(), ownerName(maid));
             // P11：名牌是新实体，通知可见性管理器对 opt-out 玩家补 hide
             if (onSpawnCallback != null) {
                 onSpawnCallback.accept(maid);
@@ -126,6 +131,19 @@ public final class NameTagManager {
             // 好感度过档才换名字颜色（蓝图 P8：灰→白→黄→粉→红），不必每 tick 重设文本
             display.text(text(maid));
             renderedLevels.put(maid.getId(), level(maid));
+            renderedOwners.put(maid.getId(), ownerName(maid));
+        } else if (Math.floorDiv(ticker, STAGGER) % OWNER_RECHECK_ROUNDS == 0) {
+            // issue #9：主人改名（原版改名 / 第三方插件）后名牌里的 {owner} 还是旧名。
+            // 原版改名必须重进服（PlayerConnectionListener.onJoin 会即时刷），
+            // 这里是插件改名的兜底：每 10 秒比对一次主人名，变了才重设文本。
+            // ticker/STAGGER 在连续 5 个 tick 内扫过全部错峰槽位，每只女仆每周期恰好比一次。
+            String rendered = renderedOwners.get(maid.getId());
+            String current = ownerName(maid);
+            if (current != null && !current.equals(rendered)) {
+                display.text(text(maid));
+                renderedLevels.put(maid.getId(), level(maid));
+                renderedOwners.put(maid.getId(), current);
+            }
         }
         display.teleport(targetLocation(entity));
     }
@@ -158,11 +176,13 @@ public final class NameTagManager {
         if (display != null) {
             display.text(text(maid));
             renderedLevels.put(maid.getId(), level(maid));
+            renderedOwners.put(maid.getId(), ownerName(maid));
         }
     }
 
     public void remove(Maid maid) {
         renderedLevels.remove(maid.getId());
+        renderedOwners.remove(maid.getId());
         UUID displayId = displays.remove(maid.getId());
         if (displayId == null) {
             return;
@@ -182,6 +202,7 @@ public final class NameTagManager {
         }
         displays.clear();
         renderedLevels.clear();
+        renderedOwners.clear();
     }
 
     private void removeOrphans(Set<UUID> live) {

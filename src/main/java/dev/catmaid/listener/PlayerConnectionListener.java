@@ -4,6 +4,7 @@ import dev.catmaid.maid.Maid;
 import dev.catmaid.maid.MaidManager;
 import dev.catmaid.maid.MaidTrait;
 import dev.catmaid.maid.MaidVisibilityManager;
+import dev.catmaid.maid.NameTagManager;
 import dev.catmaid.util.MaidItems;
 import dev.catmaid.util.Messages;
 import net.citizensnpcs.api.npc.NPC;
@@ -32,13 +33,15 @@ public final class PlayerConnectionListener implements Listener {
     private final MaidManager maidManager;
     private final MaidItems items;
     private final MaidVisibilityManager visibility;
+    private final NameTagManager nameTags;
 
     public PlayerConnectionListener(Plugin plugin, MaidManager maidManager, MaidItems items,
-                                    MaidVisibilityManager visibility) {
+                                    MaidVisibilityManager visibility, NameTagManager nameTags) {
         this.plugin = plugin;
         this.maidManager = maidManager;
         this.items = items;
         this.visibility = visibility;
+        this.nameTags = nameTags;
     }
 
     @EventHandler
@@ -63,6 +66,11 @@ public final class PlayerConnectionListener implements Listener {
         // P11：hideEntity 状态不跨 relog（Paper 不持久化），opt-out 玩家进服要重新施加
         if (visibility.isOptedOut(event.getPlayer().getUniqueId())) {
             visibility.applyAllFor(event.getPlayer());
+        }
+        // issue #9：原版改名必须重进才生效——上线时刷新该玩家所有女仆的名牌（无名牌实体的
+        // 女仆 refresh 是空操作）；插件改名另有 NameTagManager 的 10 秒低频比对兜底
+        for (Maid maid : maidManager.byOwner(event.getPlayer().getUniqueId())) {
+            nameTags.refresh(maid);
         }
     }
 

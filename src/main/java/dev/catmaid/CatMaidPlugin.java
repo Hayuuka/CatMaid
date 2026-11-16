@@ -132,7 +132,7 @@ public final class CatMaidPlugin extends JavaPlugin {
         visibilityManager.start();
 
         getServer().getPluginManager().registerEvents(
-                new PlayerConnectionListener(this, maidManager, maidItems, visibilityManager), this);
+                new PlayerConnectionListener(this, maidManager, maidItems, visibilityManager, nameTagManager), this);
 
         // 交互层：右键开菜单/喂食 + 5 个 GUI 的点击/拖拽/关闭回写
         GuiManager guiManager = new GuiManager(maidManager, modelRegistry, modelApplier, dialogueManager);
