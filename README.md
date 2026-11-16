@@ -28,12 +28,12 @@
 
 **方法一：**
 
-1. 下载 Release 中的 `CatMaid-1.1.0.jar`（插件）与 `CatMaid-Models-1.1.0.zip`（模型包，含授权文件）
+1. 下载 Release 中的 `CatMaid-1.1.1.jar`（插件）与 `CatMaid-Models-1.1.1.zip`（模型包，含授权文件）
 2. 安装依赖插件并核对版本：
    - **Citizens2 2.0.44-SNAPSHOT (build 4269)**：官方 Jenkins 发布页
    - **BetterModel 3.6.0**：官方发布页（Modrinth / GitHub Releases）
    - 三者一同放入服务器 `plugins/` 文件夹
-3. 解压 `CatMaid-Models-1.0.0.zip` 到 `plugins/BetterModel/models/`（解压后该目录下应出现 27 个 `.bbmodel`）
+3. 解压 `CatMaid-Models-1.1.1.zip` 到 `plugins/BetterModel/models/`（解压后该目录下应出现 27 个 `.bbmodel`）
 4. 启动服务器并进行配置：
    - `config.yml` 的 `models:` 名单补入模型名（名单 = 模型文件名去扩展名，须与 models 目录一致）
    - BetterModel 生成的模型 zip 挂到静态 HTTP，写入 `server.properties` 的 `resource-pack` / `resource-pack-sha1` / `require-resource-pack=true`
@@ -41,7 +41,7 @@
 
 **方法二（自行构建）：**
 
-1. **构建**：`gradlew shadowJar`，产物在 `build/libs/CatMaid-1.0.0.jar`
+1. **构建**：`gradlew shadowJar`，产物在 `build/libs/CatMaid-1.1.1.jar`
 2. **部署**：jar 放入 `plugins/`，连同 Citizens、BetterModel 一起启动
 3. **模型包**：BetterModel 生成的模型 zip 挂到静态 HTTP 并写入 `server.properties` 的 `resource-pack` / `resource-pack-sha1` / `require-resource-pack=true`
 4. **配置**：首次启动自动生成 `plugins/CatMaid/config.yml`（含注释）；各键含义见 **docs/config-guide.md**
