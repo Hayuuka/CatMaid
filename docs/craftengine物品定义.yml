@@ -1,0 +1,6 @@
+items:
+  catmaid:talisman:
+    material: minecraft:amethyst_shard
+
+  catmaid:bell:
+    material: minecraft:bell
