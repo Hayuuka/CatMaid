@@ -144,6 +144,30 @@ api-facts 24.3-6 已登记：CE 无 catmaid 物品定义、provider=craftengine 
 有效凭证时拒绝补发或改为「重绑」而非发新铃——保证凭证总数守恒；铃铛 PDC 加唯一绑定
 UUID 与归属锁，与现有 `soul_init_owner` 思路一致。落地方案待定，修完回填。
 
+### 7.1 TLM 生命周期补充调研（2026-11-16 二轮，直读 1.20 分支源码）
+
+**生成**：INIT 魂符 `item/ItemSmartSlab` 右键 → `spawnNewMaid()`：先
+`MaidNumCapability.canAdd()` 校验每玩家上限（`capability/MaidNumCapability.java`），
+通过即 `cap.add()` + `maid.tame(player)`，INIT 符变 EMPTY。上限校验在生成口。
+
+**存储**：魂符收放 `SlabClickEvent#storeMaidData` / `spawnFromStore` 用
+`saveWithoutId`/`load` 严格 1:1 搬运实体 NBT，全程不动计数；防复制 =
+`stacksTo(1)` + 禁入容器 + 掉落物无敌发光 + 双向 UUID 校验。
+台账 `world/data/MaidWorldData` 只登记在世女仆最后位置，供仆人铃定位。
+
+**死亡与复活**：死亡留不可破坏的墓碑实体 `entity/item/EntityTombstone`——装备/背包
+全部还给主人，本体 NBT 剥成胶片 `item/ItemFilm`；**死亡不释放额度**（cap.min 全库仅
+指令调用）。复活唯一通道 = 胶片插神社 `block/BlockShrine` + 玩家血量>一半（扣至 0.25
+心），`filmToMaid` 重生且不加额度——免费复活靠「额度永不释放」实现。
+
+**凭证职责边界**：仆人铃 `ItemServantBell` = 在世女仆的定位/召回器（绑 UUID、传送、
+查台账写最后坐标），**与死亡-复活完全无关**（死者不进台账）；魂符 = 活体存储凭证；
+墓碑 = 死亡现场（还物不复活）；胶片 = 复活凭证（有神社仪式 + 血量代价）。
+
+**CatMaid vs TLM**：CatMaid 把「死亡证明」与「复活权利」合并进铃铛；TLM 拆三段
+（墓碑还物 / 胶片存数据 / 神社收仪式成本），且总数守恒由**每玩家额度计数**兜底、
+与任何凭证无关——#7 的防无限补发核心手段应是召唤/补发口的额度校验，而非追凭证本身。
+
 ---
 
 ## 关联索引
