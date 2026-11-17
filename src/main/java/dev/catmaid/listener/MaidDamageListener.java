@@ -208,7 +208,13 @@ public final class MaidDamageListener implements Listener {
                 + String.format(java.util.Locale.ROOT, "%.1f", maid.getAffection()) + "，位置 " + loc + "）");
     }
 
-    /** 铃铛优先塞主人背包，放不下才掉在原地（蓝图 P4）。 */
+    /**
+     * 铃铛优先塞主人背包；放不下则掉在<b>主人脚边</b>，聊天消息如实告知（v1.1.0 生产服事故）。
+     *
+     * <p>旧行为是"掉在死亡点 + 消息仍说已放进背包"：玩家翻不到铃铛，就再也不会去死亡点找
+     * （群友打凋零摔死伊蕾丝那次，背包满 → 铃铛躺在 (2145,70,4168) 无人捡，从此认定"没发铃铛、
+     * 女仆卡死"）。掉在脚边零成本捡取，消息与事实一致。
+     */
     private void giveBell(Maid maid, Location deathLoc) {
         ItemStack bell = items.bell(maid);
         Player owner = Bukkit.getPlayer(maid.getOwnerUuid());
@@ -218,11 +224,16 @@ public final class MaidDamageListener implements Listener {
             return;
         }
         Map<Integer, ItemStack> leftover = owner.getInventory().addItem(bell);
-        for (ItemStack rest : leftover.values()) {
-            plugin.getLogger().info(owner.getName() + " 背包已满，" + maid.getName() + " 的铃铛掉落在 " + deathLoc);
-            drop(deathLoc, rest);
+        if (leftover.isEmpty()) {
+            Messages.send(owner, "bell-received", Map.of("name", maid.getName()));
+            return;
         }
-        Messages.send(owner, "bell-received", Map.of("name", maid.getName()));
+        Location at = owner.getLocation();
+        for (ItemStack rest : leftover.values()) {
+            plugin.getLogger().info(owner.getName() + " 背包已满，" + maid.getName() + " 的铃铛掉落在 " + at);
+            drop(at, rest);
+        }
+        Messages.send(owner, "bell-inventory-full", Map.of("name", maid.getName()));
     }
 
     private void drop(Location loc, ItemStack item) {

@@ -136,6 +136,8 @@ bell-lore:
   - "<gray>她睡着了。"
   - "<gray>拿在手里右键，就能把她叫醒。"
 bell-received: "<light_purple>{name} 倒下了……铃铛已放进你的背包。"
+# 背包满时铃铛改掉在主人脚边（不是死亡点），消息如实告知（v1.1.0 生产服事故修复）
+bell-inventory-full: "<yellow>背包满了！{name} 的铃铛就掉在你脚边——快捡起来，右键就能把她叫醒。"
 bell-orphan: "<gray>这枚铃铛已经失去了主人，毫无反应。"
 bell-not-yours: "<gray>铃铛毫无反应……"
 bell-already-alive: "<gray>{name} 已经醒着了。"
