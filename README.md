@@ -1,6 +1,6 @@
 # CatMaid 猫娘女仆————基于Citizens和BetterModel的女仆插件
 
-本插件为实验性插件，目的是模仿车万女仆mod的核心功能，非移植或重构。本插件为MIT开源，不保证更新和维护，如有问题请提交issue（不一定处理）或自行解决
+本插件为实验性插件，目的是模仿车万女仆mod的核心功能，非移植或重构。本插件为MIT开源，不保证更新和维护，如有问题请提交issue（不一定处理）或自行解决。对于更精细模仿的车万女仆mod请前往https://github.com/Hayuuka/TouhouLittleMaid_Plugin
 
 ## 特性
 
